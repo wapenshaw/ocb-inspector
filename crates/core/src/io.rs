@@ -4,7 +4,7 @@ use crate::error::{Error, Result};
 use crate::firmware::{BiosSchema, Limits, parse_bios};
 use crate::format::MAX_PROFILE_BYTES;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -15,16 +15,29 @@ fn io_err(path: &Path, e: std::io::Error) -> Error {
     }
 }
 
+/// Read a whole file of at most `limit` bytes. The size on disk rejects a large file early, and
+/// the read itself stops after `limit + 1` bytes, so a file that grows (or is replaced) after
+/// that check can never be read past the limit.
 pub fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
-    let meta = fs::metadata(path).map_err(|e| io_err(path, e))?;
-    if meta.len() > limit as u64 {
+    let file = fs::File::open(path).map_err(|e| io_err(path, e))?;
+    let len = file.metadata().map_err(|e| io_err(path, e))?.len();
+    if len > limit as u64 {
         return Err(Error::Limit(format!(
-            "{} is {} bytes; limit is {limit}",
-            path.display(),
-            meta.len()
+            "{} is {len} bytes; limit is {limit}",
+            path.display()
         )));
     }
-    fs::read(path).map_err(|e| io_err(path, e))
+    let mut bytes = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
+    file.take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| io_err(path, e))?;
+    if bytes.len() > limit {
+        return Err(Error::Limit(format!(
+            "{} grew past the limit of {limit} bytes while being read",
+            path.display()
+        )));
+    }
+    Ok(bytes)
 }
 
 pub fn load_bios(path: &Path) -> Result<BiosSchema> {
@@ -159,4 +172,25 @@ pub fn publish_build(
         return Err(e);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp(name: &str, bytes: &[u8]) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("ocb-io-{}-{name}", std::process::id()));
+        fs::write(&p, bytes).unwrap();
+        p
+    }
+
+    #[test]
+    fn a_file_at_the_limit_is_read_and_one_byte_more_is_not() {
+        let at = tmp("at", &[7; 16]);
+        assert_eq!(read_bounded(&at, 16).unwrap(), vec![7; 16]);
+        let over = tmp("over", &[7; 17]);
+        assert!(matches!(read_bounded(&over, 16), Err(Error::Limit(_))));
+        let _ = fs::remove_file(at);
+        let _ = fs::remove_file(over);
+    }
 }
