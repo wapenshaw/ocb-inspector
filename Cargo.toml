@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/cli", "crates/desktop"]
+default-members = ["crates/core", "crates/cli"]
+
+[workspace.package]
+publish = false
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+thiserror = "2"
+lzma-rs = "0.3"
+clap = { version = "4", features = ["derive"] }
+schemars = "1"
+toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
+
+# Firmware decompression is slow unoptimised; keep debug builds usable.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.ocb-core]
+opt-level = 1

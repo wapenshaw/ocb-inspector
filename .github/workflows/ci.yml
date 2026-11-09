@@ -1,0 +1,137 @@
+name: CI
+
+# Pull requests only: master moves by rebasing a pull request that already
+# passed, so a run on the push would repeat the same checks.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Same-repository pull requests from anyone but the maintainer (Renovate,
+  # collaborators) wait here for a review. Forks and github-actions[bot]
+  # already need a run approval from the repository settings.
+  approval:
+    name: Approval
+    if: github.event.pull_request.user.login != 'wapenshaw' && github.event.pull_request.user.login != 'github-actions[bot]' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: ci-approval
+    steps:
+      - run: echo "approved by a reviewer of the ci-approval environment"
+
+  rust:
+    name: ${{ matrix.name }}
+    needs: approval
+    if: ${{ !cancelled() && (needs.approval.result == 'success' || needs.approval.result == 'skipped') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The release's Linux runner, so CI builds what the release builds.
+          - name: Linux
+            os: ubuntu-22.04
+          - name: Windows
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Linux system packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+
+      # rustup reads the pinned toolchain and components from rust-toolchain.toml.
+      - name: Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.18.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      # The desktop app embeds the built UI, so it must exist before Clippy compiles it.
+      - name: Build UI
+        working-directory: ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # The private BIOS fixtures are not in the repository; those tests skip themselves
+      # and the synthetic ones run.
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Whitespace
+        if: runner.os == 'Linux'
+        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD
+
+  ui:
+    name: UI
+    needs: approval
+    if: ${{ !cancelled() && (needs.approval.result == 'success' || needs.approval.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.18.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm build
+
+  # THIRD-PARTY-NOTICES.txt ships in every release zip; it must match Cargo.lock and
+  # the UI bundle.
+  notices:
+    name: Notices
+    needs: approval
+    if: ${{ !cancelled() && (needs.approval.result == 'success' || needs.approval.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust toolchain
+        run: rustup toolchain install
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.18.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+      - working-directory: ui
+        run: pnpm install --frozen-lockfile
+      - run: cargo fetch --locked
+      - run: python3 -I tools/third_party_notices.py --check

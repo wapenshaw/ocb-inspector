@@ -1,0 +1,44 @@
+# Only what is needed to build and publish is tracked.
+
+# Proprietary BIOS images, user OC profiles and research material: never commit.
+/fixtures/
+/analysis/
+/docs/*
+!/docs/images/
+*.ocb
+*.HI0
+*.HJ0
+*.rom
+*.bin
+*.cap
+*.obj
+*.exe
+*.pdb
+
+# Build outputs
+/target/
+node_modules/
+dist/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# Local Claude Code files
+.claude/settings.local.json
+.playwright-mcp/
+
+# Design-preview data generated from private fixtures
+ui/public/mock/
+
+# Created beside the desktop app at run time (portable data)
+webview-data/
+/config/settings.json
+/ocb-write.json

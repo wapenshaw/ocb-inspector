@@ -1,0 +1,29 @@
+[package]
+name = "ocbi-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "OCB Inspector desktop shell (Tauri 2)"
+
+[[bin]]
+name = "ocb-inspector"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+ocb-core = { path = "../core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+# Already linked through tauri-plugin-dialog; used for the start-up error dialog.
+rfd = { version = "0.17", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+default = ["custom-protocol"]
+# Serve the embedded, built UI (production). Without it the app loads the Vite dev server.
+custom-protocol = ["tauri/custom-protocol"]
