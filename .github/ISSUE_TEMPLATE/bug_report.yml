@@ -1,0 +1,49 @@
+name: Bug report
+description: Something in the app or CLI doesn't work as described.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Press …
+  - type: input
+    id: version
+    attributes:
+      label: OCB Inspector version or commit
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows, Linux]
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options: [Desktop app, CLI]
+    validations:
+      required: true
+  - type: input
+    id: bios
+    attributes:
+      label: Board and BIOS
+      description: The BIOS ID the app shows, such as E7D91IMS.HJ0, and the board name.
+  - type: textarea
+    id: output
+    attributes:
+      label: Error text or CLI output
+      description: Paste the message or the JSON the CLI printed. Do not attach BIOS images; link the vendor download page instead.
+      render: text

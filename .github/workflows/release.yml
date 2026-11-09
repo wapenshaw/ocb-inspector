@@ -1,0 +1,183 @@
+name: Release
+
+# release-please keeps a release pull request open from the commits on master.
+# Merging it tags vX.Y.Z and opens a draft release; the jobs below build the
+# portable zips, attach them with SHA256SUMS and publish the draft, so a release
+# is never visible without its downloads.
+#
+# A manual run builds the zips without releasing anything; give it a tag to
+# rebuild and replace the zips of that existing release.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release to rebuild (vX.Y.Z); empty builds only"
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release-please:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: release-please
+    # always(): a manual run skips release-please, which would skip this too.
+    if: always() && (needs.release-please.outputs.created == 'true' || github.event_name == 'workflow_dispatch')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            platform: windows-x64
+            cli_target: x86_64-pc-windows-msvc
+            app_target: x86_64-pc-windows-msvc
+            exe: .exe
+          # The oldest supported Ubuntu, so the desktop app runs on older glibc too
+          # (2.35 and newer). The CLI is fully static (musl) and runs on any x64 Linux.
+          - name: Linux x64
+            os: ubuntu-22.04
+            platform: linux-x64
+            cli_target: x86_64-unknown-linux-musl
+            app_target: x86_64-unknown-linux-gnu
+            exe: ""
+    runs-on: ${{ matrix.os }}
+    # id-token and attestations: write let the job sign build provenance for its zip.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      TAG: ${{ needs.release-please.outputs.tag || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG || github.sha }}
+
+      - name: Tag matches Cargo.toml
+        if: env.TAG != ''
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          test "v$version" = "$TAG" || { echo "tag $TAG does not match Cargo.toml version $version"; exit 1; }
+
+      - name: Linux system packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev musl-tools zip \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+
+      # rustup reads the pinned toolchain from rust-toolchain.toml.
+      - name: Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustup target add ${{ matrix.cli_target }} ${{ matrix.app_target }}
+
+      # One cache per platform. GitHub keeps a branch's caches to that branch, and this
+      # workflow never runs for pull requests, so only master's own builds fill it.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.18.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Build UI
+        working-directory: ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Build
+        shell: bash
+        run: |
+          cargo build --release --locked -p ocbi-cli --target ${{ matrix.cli_target }}
+          cargo build --release --locked -p ocbi-desktop --target ${{ matrix.app_target }}
+
+      # One folder, zipped: the two programs, the notices they must ship with, the
+      # licence, the README, and config/ with the reviewed approvals file. Writing stays
+      # off until the user adds config/settings.json themselves.
+      - name: Package
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          name="ocb-inspector-${version}-${{ matrix.platform }}"
+          mkdir -p "stage/$name/config" dist
+          cp "target/${{ matrix.cli_target }}/release/ocbi${{ matrix.exe }}" \
+             "target/${{ matrix.app_target }}/release/ocb-inspector${{ matrix.exe }}" \
+             THIRD-PARTY-NOTICES.txt LICENSE README.md "stage/$name/"
+          cp config/approved-images.toml "stage/$name/config/"
+          cd stage
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a -tzip -mx=9 "../dist/$name.zip" "$name" > /dev/null
+          else
+            chmod +x "$name/ocbi" "$name/ocb-inspector"
+            zip -qr9 -X "../dist/$name.zip" "$name"
+          fi
+          cd ..
+          ls -l dist
+
+      # Signed build provenance, free for public repositories: anyone can check that a
+      # zip was built by this workflow from this repository with
+      # `gh attestation verify <file> --repo wapenshaw/ocb-inspector`.
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zip-${{ matrix.platform }}
+          path: dist/*
+
+  publish:
+    needs: [release-please, build]
+    if: always() && needs.build.result == 'success' && (needs.release-please.outputs.created == 'true' || inputs.tag != '')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.release-please.outputs.tag || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: zip-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+      - name: Attach and publish
+        run: |
+          gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"

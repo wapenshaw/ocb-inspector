@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.icns binary
+# Generated; kept as the generator writes it.
+THIRD-PARTY-NOTICES.txt -whitespace
+crates/core/src/firmware/LICENSE-EDK2.txt -whitespace

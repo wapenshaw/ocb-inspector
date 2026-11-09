@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- OCB Inspector: a chip seen through a thermal lens. Single source for the window/taskbar
+       icon (crates/desktop/icons, generated with `pnpm tauri icon`) and the in-app header. -->
+  <defs>
+    <radialGradient id="heat" gradientUnits="userSpaceOnUse" cx="290" cy="290" r="250">
+      <stop offset="0.3" stop-color="#f06a2e"/>
+      <stop offset="0.52" stop-color="#b4307a"/>
+      <stop offset="0.78" stop-color="#5b3790"/>
+      <stop offset="1" stop-color="#2c2a6b"/>
+    </radialGradient>
+    <radialGradient id="hot" cx="0.42" cy="0.4" r="0.7">
+      <stop offset="0" stop-color="#fff4d6"/>
+      <stop offset="0.35" stop-color="#ffd98a"/>
+      <stop offset="1" stop-color="#f06a2e"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#14112b"/>
+  <g stroke="#f5b940" stroke-width="24" stroke-linecap="round">
+    <path d="M186 74v46M256 74v46M326 74v46M186 392v46M256 392v46M74 186h46M74 256h46M74 326h46M392 186h46M392 256h46"/>
+  </g>
+  <rect x="120" y="120" width="272" height="272" rx="30" fill="url(#heat)"/>
+  <circle cx="168" cy="168" r="14" fill="#14112b"/>
+  <circle cx="290" cy="290" r="82" fill="url(#hot)" stroke="#f4f2fa" stroke-width="28"/>
+  <path d="M352 352l78 78" stroke="#f4f2fa" stroke-width="40" stroke-linecap="round"/>
+</svg>
