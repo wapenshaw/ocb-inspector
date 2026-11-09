@@ -14,6 +14,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # A release-please pull request only bumps version numbers and the changelog, and
+  # release.yml builds and checks everything again after it merges. Its jobs still
+  # run, so the required checks report, but they skip their steps.
+  RELEASE_PR: ${{ github.event.pull_request.user.login == 'github-actions[bot]' && startsWith(github.head_ref, 'release-please--') }}
 
 jobs:
   # Same-repository pull requests from anyone but the maintainer (Renovate,
@@ -41,11 +45,14 @@ jobs:
           - name: Windows
             os: windows-latest
     runs-on: ${{ matrix.os }}
+    # Steps, not the job, skip a release pull request: a skipped matrix job reports
+    # under its unexpanded name, so the required Linux and Windows checks would never arrive.
     steps:
       - uses: actions/checkout@v7
+        if: env.RELEASE_PR != 'true'
 
       - name: Linux system packages
-        if: runner.os == 'Linux'
+        if: env.RELEASE_PR != 'true' && runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -54,14 +61,18 @@ jobs:
 
       # rustup reads the pinned toolchain and components from rust-toolchain.toml.
       - name: Rust toolchain
+        if: env.RELEASE_PR != 'true'
         run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
+        if: env.RELEASE_PR != 'true'
 
       - uses: pnpm/action-setup@v6
+        if: env.RELEASE_PR != 'true'
         with:
           version: 12.18.0
       - uses: actions/setup-node@v7
+        if: env.RELEASE_PR != 'true'
         with:
           node-version: 26
           cache: pnpm
@@ -69,31 +80,34 @@ jobs:
 
       # The desktop app embeds the built UI, so it must exist before Clippy compiles it.
       - name: Build UI
+        if: env.RELEASE_PR != 'true'
         working-directory: ui
         run: |
           pnpm install --frozen-lockfile
           pnpm build
 
       - name: Format
-        if: runner.os == 'Linux'
+        if: env.RELEASE_PR != 'true' && runner.os == 'Linux'
         run: cargo fmt --all --check
 
       - name: Clippy
+        if: env.RELEASE_PR != 'true'
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       # The private BIOS fixtures are not in the repository; those tests skip themselves
       # and the synthetic ones run.
       - name: Test
+        if: env.RELEASE_PR != 'true'
         run: cargo test --workspace --locked
 
       - name: Whitespace
-        if: runner.os == 'Linux'
+        if: env.RELEASE_PR != 'true' && runner.os == 'Linux'
         run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD
 
   ui:
     name: UI
     needs: approval
-    if: ${{ !cancelled() && (needs.approval.result == 'success' || needs.approval.result == 'skipped') }}
+    if: ${{ !cancelled() && (needs.approval.result == 'success' || needs.approval.result == 'skipped') && !(github.event.pull_request.user.login == 'github-actions[bot]' && startsWith(github.head_ref, 'release-please--')) }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -117,7 +131,7 @@ jobs:
   notices:
     name: Notices
     needs: approval
-    if: ${{ !cancelled() && (needs.approval.result == 'success' || needs.approval.result == 'skipped') }}
+    if: ${{ !cancelled() && (needs.approval.result == 'success' || needs.approval.result == 'skipped') && !(github.event.pull_request.user.login == 'github-actions[bot]' && startsWith(github.head_ref, 'release-please--')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

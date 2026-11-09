@@ -25,6 +25,16 @@
         "pin"
       ],
       "groupName": "dependencies"
+    },
+    {
+      "description": "rfd stays on the version tauri-plugin-dialog uses (0.17 in 2.8), so only one copy is built. Raise both together when the plugin moves.",
+      "matchPackageNames": ["rfd"],
+      "allowedVersions": "<0.18"
+    },
+    {
+      "description": "svelte-check 4.7 accepts TypeScript 5 and 6 only. Lift this once svelte-check supports TypeScript 7.",
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7"
     }
   ]
 }
