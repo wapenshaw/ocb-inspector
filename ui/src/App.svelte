@@ -2,11 +2,13 @@
   import Inspect from "./lib/Inspect.svelte";
   import Migrate from "./lib/Migrate.svelte";
   import Compare from "./lib/Compare.svelte";
+  import About from "./lib/About.svelte";
   import Status from "./lib/Status.svelte";
+  import { about } from "./lib/updates.svelte";
   import { app } from "./lib/app.svelte";
   import { applyTheme, currentTheme, saveTheme, THEME_MODES, type ThemeMode } from "./lib/theme";
 
-  let view = $state<"inspect" | "compare" | "migrate">("inspect");
+  let view = $state<"inspect" | "compare" | "migrate" | "about">("inspect");
   let inspect = $state<Inspect | null>(null);
   let browsing = $state<string | null>(null);
   let theme = $state<ThemeMode>(currentTheme());
@@ -63,9 +65,17 @@
         <span class="wide"><Status tone="attention" text="Experimental writing on" title="Edit and Port can write new profiles. Turn it off in config/settings.json." /></span>
         <span class="narrow"><Status tone="attention" text="Experimental" title="Writing is on: Edit and Port can write new profiles. Turn it off in config/settings.json." /></span>
       {:else}
-        <span class="wide" title={app.writingNote}>Read-only and offline. Files never leave this computer.</span>
+        <span class="wide" title={app.writingNote}>Read-only. Your files never leave this computer.</span>
       {/if}
     </span>
+    <!-- Version; opens About. Styled like the colour-mode switch beside it, with a badge when a newer release exists. -->
+    <div class="theme version">
+      <button class:on={view === "about"} aria-current={view === "about" ? "page" : undefined} onclick={() => (view = "about")}
+        title={about.state === "available" ? `Version ${about.newer[0]?.version} is available` : "About OCB Inspector and its changelog"}>
+        <span class="mono">v{about.info?.version ?? "…"}</span>
+        {#if about.state === "available"}<span class="badge">Update</span>{/if}
+      </button>
+    </div>
     <div class="theme" role="radiogroup" aria-label="Colour mode">
       {#each THEME_MODES as t (t.mode)}
         <button role="radio" aria-checked={theme === t.mode} class:on={theme === t.mode} onclick={() => setTheme(t.mode)}>{t.label}</button>
@@ -94,6 +104,7 @@
     <div class="view" hidden={view !== "inspect"}><Inspect bind:this={inspect} bind:browsing /></div>
     <div class="view" hidden={view !== "compare"}><Compare /></div>
     {#if app.writing}<div class="view" hidden={view !== "migrate"}><Migrate /></div>{/if}
+    {#if view === "about"}<div class="view"><About /></div>{/if}
   </main>
 </div>
 
@@ -164,6 +175,21 @@
   }
   .theme button:focus-visible {
     outline-offset: -2px;
+  }
+  .version button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    color: var(--ink);
+  }
+  .badge {
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--hot);
+    color: var(--on-hot);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.4;
   }
   .views {
     display: flex;

@@ -8,7 +8,7 @@ Things worth reporting include:
 
 - A crafted BIOS image or `.ocb` profile that crashes the app, makes it hang or use unbounded memory, or runs code.
 - A way to make the app or CLI write a profile without the experimental writing switch, for an image that is not approved, or with settings other than the reviewed ones.
-- A way for the desktop window to read or write files beyond the ones the user chose, or to reach the network.
+- A way for the desktop window to read or write files beyond the ones the user chose, to reach the network beyond the update check (one request for this repository's release list on GitHub), or to open a page or program other than this repository's pages.
 - A file written outside the folder the user chose, or an input file overwritten.
 
 ## Supported versions

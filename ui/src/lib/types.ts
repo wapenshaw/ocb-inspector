@@ -395,3 +395,27 @@ export interface DiffPayload {
   all_differences?: CompareEntry[];
   compared?: number;
 }
+
+/** desktop `app_info`: what the About screen shows without the network. */
+export interface AppInfo {
+  version: string;
+  /** CHANGELOG.md built into this version. */
+  changelog: string;
+  repo_url: string;
+  /** False when config/settings.json has "update_check": false. */
+  update_check: boolean;
+}
+
+export interface ReleaseInfo {
+  version: string;
+  /** release-please's Markdown entry for this release. */
+  notes: string;
+  url: string;
+  published_at: string;
+}
+
+/** desktop `check_updates`: releases newer than this build, newest first. */
+export interface UpdateInfo {
+  current: string;
+  newer: ReleaseInfo[];
+}

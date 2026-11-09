@@ -14,6 +14,8 @@ import type {
   Report,
   Selection,
   VerifyPayload,
+  AppInfo,
+  UpdateInfo,
 } from "./types";
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -50,6 +52,9 @@ export const api = {
     call<Patch>("migrate_plan", { ...pairArgs(p), selection, prior }),
   migrateBuild: (p: PairPaths, plan: Patch, out: string) => call<BuildResult>("migrate_build", { ...pairArgs(p), plan, out }),
   savePlan: (plan: Patch, out: string) => call<string>("save_plan", { plan, out }),
+  appInfo: () => call<AppInfo>("app_info", {}),
+  checkUpdates: () => call<UpdateInfo>("check_updates", {}),
+  openPage: (url: string) => call<void>("open_page", { url }),
 };
 
 export interface PairPaths {
@@ -129,6 +134,44 @@ async function mock<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
     case "migrate_plan":
       name = String(args.sourceBios).endsWith("HJ0") ? "plan-down" : "plan";
       break;
+    case "app_info":
+      return {
+        version: "0.1.0",
+        changelog: `# Changelog
+
+## 0.1.0 (2026-11-09)
+
+
+### Features
+
+* initial release of OCB Inspector ([ce6c7f9](https://github.com/wapenshaw/ocb-inspector/commit/ce6c7f9))
+`,
+        repo_url: "https://github.com/wapenshaw/ocb-inspector",
+        update_check: true,
+      } as T;
+    case "check_updates":
+      // Preview: ?update in the address shows a newer release.
+      return {
+        current: "0.1.0",
+        newer: location.search.includes("update")
+          ? [{ version: "0.2.0", url: "https://github.com/wapenshaw/ocb-inspector/releases/tag/v0.2.0", published_at: "2026-11-20T10:00:00Z",
+               notes: `## [0.2.0](https://github.com/wapenshaw/ocb-inspector/compare/v0.1.0...v0.2.0) (2026-11-20)
+
+
+### Features
+
+* **desktop:** show the app version and check for updates ([abc1234](https://github.com/wapenshaw/ocb-inspector/commit/abc1234))
+
+
+### Bug Fixes
+
+* **ui:** keep the menu rail from shifting ([def5678](https://github.com/wapenshaw/ocb-inspector/commit/def5678))
+` }]
+          : [],
+      } as T;
+    case "open_page":
+      window.open(String(args.url), "_blank", "noopener");
+      return undefined as T;
     case "migrate_build":
       return { output_path: args.out, report_path: String(args.out).replace(/\.ocb$/, ".manifest.json"), manifest: await fetchJson("manifest") } as T;
     default:

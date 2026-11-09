@@ -29,6 +29,9 @@ pub struct Settings {
     pub theme: Option<String>,
     #[serde(default)]
     pub experimental: Experimental,
+    /// Desktop app: look for a newer release on GitHub at start (default on).
+    #[serde(default)]
+    pub update_check: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

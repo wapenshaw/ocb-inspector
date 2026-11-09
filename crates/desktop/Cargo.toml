@@ -20,6 +20,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 # Already linked through tauri-plugin-dialog; used for the start-up error dialog.
 rfd = { version = "0.17", default-features = false }
+# Update check only: one HTTPS GET of the public release list on GitHub.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 serde.workspace = true
 serde_json.workspace = true
 

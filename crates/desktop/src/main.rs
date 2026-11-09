@@ -14,6 +14,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+mod updates;
+
 /// Same shape as the CLI's JSON error envelope.
 #[derive(Debug, Serialize)]
 struct CmdError {
@@ -351,6 +353,29 @@ fn settings_save(settings: ThemeChoice) -> R<()> {
     })
 }
 
+/// Version, built-in changelog and whether the update check is on.
+#[tauri::command]
+fn app_info() -> updates::AppInfo {
+    updates::app_info()
+}
+
+/// Releases on GitHub newer than this build (one GET of the public release list).
+#[tauri::command(async)]
+fn check_updates() -> R<updates::UpdateInfo> {
+    updates::check().map_err(|m| {
+        CmdError::from(Error::Io {
+            path: "GitHub releases".into(),
+            message: m,
+        })
+    })
+}
+
+/// Open a page of this repository (a release, the changelog) in the default browser.
+#[tauri::command]
+fn open_page(url: String) -> R<()> {
+    updates::open_page(&url).map_err(|m| Error::Request(m).into())
+}
+
 /// Create the main window with its web view profile (WebView2 on Windows, WebKitGTK on Linux)
 /// in `config/webview-data/`.
 fn open_main_window(app: &tauri::App) -> Result<(), String> {
@@ -410,7 +435,10 @@ fn main() {
             migrate_build,
             save_plan,
             settings_load,
-            settings_save
+            settings_save,
+            app_info,
+            check_updates,
+            open_page
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
