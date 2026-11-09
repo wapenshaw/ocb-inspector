@@ -4,7 +4,7 @@
 
 use ocb_core::bytes::sha256_hex;
 use ocb_core::contracts::*;
-use ocb_core::engine::{Session, browse, edit, inspect, migrate, verify};
+use ocb_core::engine::{Session, browse, edit, inspect, migrate};
 use ocb_core::error::Error;
 use ocb_core::firmware::{BiosImage, BiosSchema, Limits, analyze};
 use ocb_core::format::MAX_PROFILE_BYTES;
@@ -13,6 +13,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 mod updates;
 
@@ -42,23 +43,67 @@ struct Parsed {
     schema: Result<Arc<BiosSchema>, Error>,
 }
 
-/// Parsed images keyed by digest, so each image parses once per run.
+/// A file as last seen: where it is, its size and when it was last changed.
+#[derive(PartialEq, Eq, Hash)]
+struct FileStamp {
+    path: PathBuf,
+    len: u64,
+    modified: SystemTime,
+}
+
+impl FileStamp {
+    fn of(path: &str) -> Option<FileStamp> {
+        let path = std::fs::canonicalize(path).ok()?;
+        let meta = std::fs::metadata(&path).ok()?;
+        Some(FileStamp {
+            len: meta.len(),
+            modified: meta.modified().ok()?,
+            path,
+        })
+    }
+}
+
+/// How much to trust a BIOS image read earlier.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImageRead {
+    /// Display only: an image whose path, size and modification time are unchanged is not read
+    /// and hashed again.
+    Cached,
+    /// Anything that writes: always read and hash the file now, so approval is decided on what
+    /// the file holds, never on what it held before.
+    Fresh,
+}
+
+/// Parsed images keyed by digest, so each image parses once per run, plus the digest each file
+/// had when last read.
 #[derive(Default)]
 struct AppState {
     parsed: Mutex<HashMap<String, Arc<Parsed>>>,
+    digests: Mutex<HashMap<FileStamp, String>>,
+}
+
+fn locked<T>(m: &Mutex<T>) -> Result<std::sync::MutexGuard<'_, T>, Error> {
+    m.lock()
+        .map_err(|_| Error::Internal("cache poisoned".into()))
 }
 
 impl AppState {
-    fn parsed(&self, path: &str) -> Result<Arc<Parsed>, Error> {
+    fn parsed(&self, path: &str, read: ImageRead) -> Result<Arc<Parsed>, Error> {
+        let stamp = FileStamp::of(path);
+        if read == ImageRead::Cached
+            && let Some(stamp) = &stamp
+            && let Some(sha) = locked(&self.digests)?.get(stamp)
+            && let Some(p) = locked(&self.parsed)?.get(sha)
+        {
+            return Ok(p.clone());
+        }
         let limits = Limits::default();
         let bytes = io::read_bounded(Path::new(path), limits.max_bios_bytes)?;
         let sha = sha256_hex(&bytes);
-        let lock = || {
-            self.parsed
-                .lock()
-                .map_err(|_| Error::Internal("cache poisoned".into()))
-        };
-        if let Some(p) = lock()?.get(&sha) {
+        if let Some(stamp) = stamp {
+            locked(&self.digests)?.insert(stamp, sha.clone());
+        }
+        if let Some(p) = locked(&self.parsed)?.get(&sha) {
             return Ok(p.clone());
         }
         let a = analyze(&bytes, limits)?;
@@ -66,16 +111,12 @@ impl AppState {
             image: Arc::new(a.image),
             schema: a.schema.map(Arc::new),
         });
-        lock()?.insert(sha, p.clone());
+        locked(&self.parsed)?.insert(sha, p.clone());
         Ok(p)
     }
 
-    fn schema(&self, path: &str) -> Result<Arc<BiosSchema>, Error> {
-        self.parsed(path)?.schema.clone()
-    }
-
-    fn session(&self, bios: &str, profile: &str) -> Result<Session, Error> {
-        let schema = self.schema(bios)?;
+    fn session(&self, bios: &str, profile: &str, read: ImageRead) -> Result<Session, Error> {
+        let schema = self.parsed(bios, read)?.schema.clone()?;
         let bytes = io::read_bounded(Path::new(profile), MAX_PROFILE_BYTES)?;
         Ok(Session::pair(schema, bytes)?.with_paths(Some(bios.into()), Some(profile.into())))
     }
@@ -120,7 +161,7 @@ fn publish(b: edit::BuildOutput, out: &str, inputs: &[&str]) -> R<BuildResult> {
 /// supported family; `profiles_supported` says whether a profile can be paired with it.
 #[tauri::command(async)]
 fn bios_summary(state: tauri::State<'_, AppState>, bios: String) -> R<BiosSummary> {
-    let p = state.parsed(&bios)?;
+    let p = state.parsed(&bios, ImageRead::Cached)?;
     Ok(ocb_core::engine::session::image_summary(
         &p.image,
         p.schema.as_ref().ok().map(|s| s.as_ref()),
@@ -135,7 +176,7 @@ fn bios_browse(
     bios: String,
     set: Option<usize>,
 ) -> R<Report<BrowsePayload>> {
-    let p = state.parsed(&bios)?;
+    let p = state.parsed(&bios, ImageRead::Cached)?;
     Ok(browse::browse(
         &p.image,
         p.schema.as_ref().ok().map(|s| s.as_ref()),
@@ -150,7 +191,10 @@ fn inspect_pair(
     bios: String,
     profile: String,
 ) -> R<Report<InspectPayload>> {
-    Ok(inspect::inspect(&state.session(&bios, &profile)?, true))
+    Ok(inspect::inspect(
+        &state.session(&bios, &profile, ImageRead::Cached)?,
+        true,
+    ))
 }
 
 /// Two profiles side by side: every setting, reviewed or not, that differs. Read-only.
@@ -162,18 +206,9 @@ fn diff_pairs(
     right_bios: String,
     right_profile: String,
 ) -> R<Report<DiffPayload>> {
-    let l = state.session(&left_bios, &left_profile)?;
-    let r = state.session(&right_bios, &right_profile)?;
+    let l = state.session(&left_bios, &left_profile, ImageRead::Cached)?;
+    let r = state.session(&right_bios, &right_profile, ImageRead::Cached)?;
     Ok(inspect::diff_with(&l, &r, true))
-}
-
-#[tauri::command(async)]
-fn verify_pair(
-    state: tauri::State<'_, AppState>,
-    bios: String,
-    profile: String,
-) -> R<Report<VerifyPayload>> {
-    Ok(verify::verify_profile(&state.session(&bios, &profile)?))
 }
 
 fn edit_patch(base: Binding, operations: Vec<Operation>) -> Patch {
@@ -211,7 +246,7 @@ fn edit_validate(
     base: Binding,
     operations: Vec<Operation>,
 ) -> R<EditPreview> {
-    let s = state.session(&bios, &profile)?;
+    let s = state.session(&bios, &profile, ImageRead::Cached)?;
     let out = edit::build_edit(&s, &edit_patch(base, operations), "preview.ocb")?;
     Ok(EditPreview {
         changes: out.manifest.changes,
@@ -228,7 +263,7 @@ fn edit_build(
     operations: Vec<Operation>,
     out: String,
 ) -> R<BuildResult> {
-    let s = state.session(&bios, &profile)?;
+    let s = state.session(&bios, &profile, ImageRead::Fresh)?;
     let name = Path::new(&out)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -248,8 +283,8 @@ fn migrate_plan(
     selection: Selection,
     prior: Option<Patch>,
 ) -> R<Patch> {
-    let src = state.session(&source_bios, &source_profile)?;
-    let tgt = state.session(&target_bios, &target_profile)?;
+    let src = state.session(&source_bios, &source_profile, ImageRead::Cached)?;
+    let tgt = state.session(&target_bios, &target_profile, ImageRead::Cached)?;
     Ok(migrate::plan(&src, &tgt, selection, prior.as_ref())?.0)
 }
 
@@ -264,8 +299,8 @@ fn migrate_build(
     plan: Patch,
     out: String,
 ) -> R<BuildResult> {
-    let src = state.session(&source_bios, &source_profile)?;
-    let tgt = state.session(&target_bios, &target_profile)?;
+    let src = state.session(&source_bios, &source_profile, ImageRead::Fresh)?;
+    let tgt = state.session(&target_bios, &target_profile, ImageRead::Fresh)?;
     let name = Path::new(&out)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -308,49 +343,81 @@ struct UiSettings {
     writing: bool,
     /// Why writing is off, or empty.
     writing_note: String,
+    /// The settings file, for display.
+    path: String,
+    /// What the file holds now, for the Settings switches. Saved changes apply at the next start.
+    saved: SavedSwitches,
+    /// Why the file cannot be read or changed, or empty (the switches are then disabled).
+    error: String,
 }
 
-#[derive(serde::Deserialize)]
-struct ThemeChoice {
-    theme: String,
+#[derive(Serialize, Default)]
+struct SavedSwitches {
+    update_check: bool,
+    writing: bool,
 }
 
-const THEMES: [&str; 3] = ["light", "dark", "system"];
+impl From<&ocb_core::settings::Settings> for SavedSwitches {
+    fn from(s: &ocb_core::settings::Settings) -> Self {
+        SavedSwitches {
+            update_check: s.update_check_on(),
+            writing: s.experimental.writing,
+        }
+    }
+}
 
 /// A missing or unreadable settings file means defaults; it never stops the app.
 #[tauri::command]
 fn settings_load() -> R<UiSettings> {
+    use ocb_core::settings::{THEMES, active, saved, writing_enabled, writing_off_reason};
     // Read once at start-up; the theme is only ever changed by this app, which the UI tracks.
-    let theme = ocb_core::settings::active()
+    let theme = active()
         .settings
         .theme
         .clone()
         .filter(|t| THEMES.contains(&t.as_str()));
-    let writing = ocb_core::settings::writing_enabled();
+    let writing = writing_enabled();
+    // What the file holds now, which may differ from what was read at start.
+    let now = portable_dir().and_then(|dir| {
+        let p = dir.join(ocb_core::settings::FILE_NAME);
+        Ok((p.display().to_string(), saved(&p)?))
+    });
+    let (path, saved, error) = match now {
+        Ok((path, s)) => (path, SavedSwitches::from(&s), String::new()),
+        Err(e) => (String::new(), SavedSwitches::default(), e),
+    };
     Ok(UiSettings {
         theme,
         writing,
         writing_note: if writing {
             String::new()
         } else {
-            ocb_core::settings::writing_off_reason()
+            writing_off_reason()
         },
+        path,
+        saved,
+        error,
     })
 }
 
-/// Save the colour mode. Every other key in the file is kept as the user wrote it.
+/// Save the colour mode or a Settings switch. Every other key in the file is kept as the user
+/// wrote it. Returns the switches as now saved.
 #[tauri::command]
-fn settings_save(settings: ThemeChoice) -> R<()> {
-    if !THEMES.contains(&settings.theme.as_str()) {
-        return Err(Error::Request(format!("unknown theme {:?}", settings.theme)).into());
+fn settings_save(settings: ocb_core::settings::Change) -> R<SavedSwitches> {
+    if let Some(theme) = &settings.theme
+        && !ocb_core::settings::THEMES.contains(&theme.as_str())
+    {
+        return Err(Error::Request(format!("unknown theme {theme:?}")).into());
     }
     let path = settings_path()?;
-    ocb_core::settings::save_theme(&path, &settings.theme).map_err(|m| {
-        CmdError::from(Error::Io {
+    match ocb_core::settings::save(&path, &settings) {
+        Ok(s) => Ok(SavedSwitches::from(&s)),
+        Err(message) => Err(Error::Io {
             path: path.display().to_string(),
-            message: m,
-        })
-    })
+            message,
+        }
+        .into()),
+    }
 }
 
 /// Version, built-in changelog and whether the update check is on.
@@ -428,7 +495,6 @@ fn main() {
             bios_browse,
             inspect_pair,
             diff_pairs,
-            verify_pair,
             edit_validate,
             edit_build,
             migrate_plan,

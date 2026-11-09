@@ -249,13 +249,6 @@ export interface InspectPayload {
   opaque_records: number;
 }
 
-export interface VerifyPayload {
-  bios: BiosSummary;
-  profile: ProfileSummary;
-  checks: Check[];
-  status: string;
-}
-
 export interface Operation {
   op: "set";
   setting_id: string;
@@ -418,4 +411,31 @@ export interface ReleaseInfo {
 export interface UpdateInfo {
   current: string;
   newer: ReleaseInfo[];
+}
+
+/** The Settings switches as saved in config/settings.json (they apply at the next start). */
+export interface SavedSwitches {
+  update_check: boolean;
+  writing: boolean;
+}
+
+/** What `settings_load` returns: the settings in effect plus the switches saved now. */
+export interface UiSettings {
+  theme?: string | null;
+  /** Experimental writing switch in effect (read at start-up). */
+  writing: boolean;
+  /** Why writing is off, or empty. */
+  writing_note: string;
+  /** The settings file, for display. */
+  path: string;
+  saved: SavedSwitches;
+  /** Why the file cannot be read or changed, or empty. */
+  error: string;
+}
+
+/** Keys `settings_save` may change; the rest of the file is kept. */
+export interface SettingsChange {
+  theme?: string;
+  update_check?: boolean;
+  writing?: boolean;
 }

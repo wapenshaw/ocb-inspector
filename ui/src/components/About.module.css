@@ -1,0 +1,150 @@
+.page {
+  max-width: 1120px;
+  padding: 40px var(--s6) 64px;
+}
+/* One grid: name and version beside the update card, then the reading column beside Settings,
+   so the update card sits right above the Settings it relates to. */
+.top,
+.cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  gap: var(--s6);
+}
+.top {
+  align-items: center;
+  margin-bottom: var(--s6);
+}
+.cols {
+  align-items: start;
+}
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s6);
+  min-width: 0;
+}
+.side {
+  position: sticky;
+  top: var(--s4);
+}
+@media (max-width: 860px) {
+  .top,
+  .cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .side {
+    position: static;
+  }
+}
+.id {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+}
+.id img {
+  border-radius: 14px;
+  box-shadow: 0 0 0 1px var(--rule-strong);
+}
+.page h1 {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+.ver {
+  display: flex;
+  gap: var(--s3);
+  margin-top: var(--s1);
+  font-size: var(--fs-small);
+}
+.update {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s3);
+  padding: var(--s4);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+/* Room for the longest message (status + two lines), so checking never resizes the card or moves
+   the page below it. */
+.state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 0;
+  min-height: 64px;
+}
+.state p {
+  font-size: var(--fs-small);
+}
+/* Right-aligned: "Open the release" appears to the left, so "Check now" never moves. */
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+  flex: none;
+}
+.page h2 {
+  font-size: var(--fs-lead);
+  font-weight: 600;
+  margin-bottom: var(--s3);
+}
+.log {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  padding: 0;
+  margin: 0;
+}
+.log > li {
+  padding-left: var(--s4);
+  border-left: 3px solid var(--rule-strong);
+}
+.log > li.fresh {
+  border-left-color: var(--hot);
+}
+.page h3 {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+.page h3 :global(.faint) {
+  font-weight: 400;
+  font-size: var(--fs-small);
+}
+.page h4 {
+  margin-top: var(--s2);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--ink-quiet);
+}
+.log ul {
+  margin: var(--s1) 0 0;
+  padding-left: 1.2em;
+}
+.log ul li {
+  line-height: 1.45;
+}
+.more {
+  margin-top: var(--s3);
+}
+.fine p {
+  max-width: 66ch;
+  line-height: 1.5;
+  margin-bottom: var(--s2);
+}
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}

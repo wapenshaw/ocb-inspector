@@ -11,8 +11,8 @@
 //! It is a second lock, not a replacement: an image must still be listed in the approvals file
 //! (`approvals`), and only reviewed recipes are ever written. A missing file means defaults; an
 //! unreadable or invalid one also means writing stays off, and the reason is kept for display.
-//! The desktop app also keeps its colour mode (`theme`) here; saving it leaves every other key as
-//! the user wrote it.
+//! The desktop app also saves its colour mode (`theme`) and its Settings switches (`update_check`,
+//! `experimental.writing`) here; saving leaves every other key as the user wrote it.
 
 use crate::approvals::CONFIG_DIR;
 use serde::Deserialize;
@@ -20,6 +20,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 pub const FILE_NAME: &str = "settings.json";
+/// The colour modes the desktop app knows; any other `theme` value is ignored.
+pub const THEMES: [&str; 3] = ["light", "dark", "system"];
 /// Settings files are tiny; anything larger is not one.
 const MAX_FILE_BYTES: usize = 64 * 1024;
 
@@ -32,6 +34,13 @@ pub struct Settings {
     /// Desktop app: look for a newer release on GitHub at start (default on).
     #[serde(default)]
     pub update_check: Option<bool>,
+}
+
+impl Settings {
+    /// Whether the desktop app looks for a newer release at start: on unless turned off.
+    pub fn update_check_on(&self) -> bool {
+        self.update_check != Some(false)
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -131,26 +140,57 @@ pub fn writing_off_reason() -> String {
     }
 }
 
-/// Set `theme` in the settings file at `path`, keeping every other key exactly as it was.
-/// Written to a flushed temp sibling, then renamed over the file.
-pub fn save_theme(path: &Path, theme: &str) -> Result<(), String> {
+/// Keys the desktop app may change in the settings file. `None` leaves a key as it is.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Change {
+    pub theme: Option<String>,
+    pub update_check: Option<bool>,
+    pub writing: Option<bool>,
+}
+
+/// Apply `change` to the settings file at `path`, keeping every other key exactly as it was.
+/// A file that is not a JSON object, or whose `experimental` is not an object, is left alone and
+/// reported. Written to a flushed temp sibling, then renamed over the file. Takes effect at the
+/// next start: the settings in effect for this process never change. Returns the settings as
+/// now saved.
+pub fn save(path: &Path, change: &Change) -> Result<Settings, String> {
+    use serde_json::Value;
     let mut obj = read_object(path)?.unwrap_or_default();
-    obj.insert("theme".into(), serde_json::Value::String(theme.into()));
-    let json =
-        serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| e.to_string())?;
+    if let Some(theme) = &change.theme {
+        obj.insert("theme".into(), Value::String(theme.clone()));
+    }
+    if let Some(on) = change.update_check {
+        obj.insert("update_check".into(), Value::Bool(on));
+    }
+    if let Some(on) = change.writing {
+        let exp = obj
+            .entry("experimental")
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        let Value::Object(exp) = exp else {
+            return Err(format!(
+                "\"experimental\" in {} is not an object",
+                path.display()
+            ));
+        };
+        exp.insert("writing".into(), Value::Bool(on));
+    }
+    let obj = Value::Object(obj);
+    // Never write a file that would then be rejected at start (and turn writing off).
+    let settings = Settings::deserialize(&obj).map_err(|e| format!("{}: {e}", path.display()))?;
+    let json = serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)
             .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     }
-    crate::io::replace_atomic(
-        path,
-        format!(
-            "{json}
-"
-        )
-        .as_bytes(),
-    )
-    .map_err(|e| e.to_string())
+    crate::io::replace_atomic(path, format!("{json}\n").as_bytes()).map_err(|e| e.to_string())?;
+    Ok(settings)
+}
+
+/// The settings saved in the file at `path` now (they may differ from the ones in effect, which
+/// were read at start). A missing file gives defaults.
+pub fn saved(path: &Path) -> Result<Settings, String> {
+    let a = load(path);
+    a.error.map_or(Ok(a.settings), Err)
 }
 
 #[cfg(test)]
@@ -187,11 +227,55 @@ mod tests {
             "{ \"experimental\": { \"writing\": true }, \"note\": 1 }",
         )
         .unwrap();
-        save_theme(&p, "dark").unwrap();
+        save(
+            &p,
+            &Change {
+                theme: Some("dark".into()),
+                ..Change::default()
+            },
+        )
+        .unwrap();
         let a = load(&p);
         assert!(a.settings.experimental.writing);
         assert_eq!(a.settings.theme.as_deref(), Some("dark"));
         let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
         assert_eq!(v["note"], 1);
+    }
+
+    #[test]
+    fn switches_are_saved_and_other_keys_kept() {
+        let p = tmp("switches");
+        std::fs::write(
+            &p,
+            "{ \"theme\": \"dark\", \"experimental\": { \"other\": 2 } }",
+        )
+        .unwrap();
+        let change = Change {
+            update_check: Some(false),
+            writing: Some(true),
+            ..Change::default()
+        };
+        save(&p, &change).unwrap();
+        let s = saved(&p).unwrap();
+        assert!(s.experimental.writing);
+        assert_eq!(s.update_check, Some(false));
+        assert_eq!(s.theme.as_deref(), Some("dark"));
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        assert_eq!(v["experimental"]["other"], 2);
+    }
+
+    #[test]
+    fn a_malformed_experimental_key_is_not_overwritten() {
+        let p = tmp("malformed");
+        std::fs::write(&p, "{ \"experimental\": true }").unwrap();
+        let change = Change {
+            writing: Some(true),
+            ..Change::default()
+        };
+        assert!(save(&p, &change).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&p).unwrap(),
+            "{ \"experimental\": true }"
+        );
     }
 }

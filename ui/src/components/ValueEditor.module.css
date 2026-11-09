@@ -1,0 +1,28 @@
+.select {
+  width: 100%;
+}
+.num {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.auto {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  padding-right: var(--s2);
+  border-right: 1px solid var(--rule);
+  margin-right: var(--s1);
+}
+.num input[type="number"] {
+  width: 96px;
+  text-align: right;
+}
+.unit {
+  color: var(--ink-quiet);
+}
+.hint {
+  margin-top: var(--s1);
+  color: var(--ink-quiet);
+  font-size: var(--fs-small);
+}

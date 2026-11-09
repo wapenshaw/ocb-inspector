@@ -1,4 +1,4 @@
-import type { Value } from "./types";
+import type { Value } from "../api/types";
 
 /** Split a value into a number part (monospace) and a unit/label part (UI font). */
 export function parts(v: Value | null | undefined): { num?: string; text?: string; auto?: boolean } {

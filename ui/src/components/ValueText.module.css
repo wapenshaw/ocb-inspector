@@ -1,0 +1,15 @@
+.v {
+  white-space: nowrap;
+}
+.unit {
+  color: var(--ink-quiet);
+  font-size: var(--fs-small);
+}
+.auto {
+  color: var(--ink-quiet);
+  font-style: italic;
+}
+.strike {
+  text-decoration: line-through;
+  text-decoration-color: var(--ink-faint);
+}

@@ -1,41 +1,46 @@
 // The app's version and the update check, shared by the header button and the About screen.
 // The check is one request for the public release list on GitHub (made by the Rust side); the
 // user downloads a new release themselves from its page.
-import { api, errorMessage } from "./api";
-import type { AppInfo, ReleaseInfo } from "./types";
+import { api, errorMessage } from "../api";
+import type { AppInfo, ReleaseInfo } from "../api/types";
+import { createStore, useStore } from "../state/store";
 
-export const about = $state({
-  info: null as AppInfo | null,
-  state: "idle" as "idle" | "off" | "checking" | "current" | "available" | "error",
-  newer: [] as ReleaseInfo[],
-  error: "",
-  checkedAt: null as Date | null,
-});
+export type UpdateState = "idle" | "off" | "checking" | "current" | "available" | "error";
+
+export interface AboutState {
+  info: AppInfo | null;
+  state: UpdateState;
+  newer: ReleaseInfo[];
+  error: string;
+  checkedAt: Date | null;
+}
+
+export const aboutStore = createStore<AboutState>({ info: null, state: "idle", newer: [], error: "", checkedAt: null });
+
+export const useAbout = () => useStore(aboutStore);
 
 export async function loadAbout(): Promise<void> {
+  let info: AppInfo;
   try {
-    about.info = await api.appInfo();
+    info = await api.appInfo();
   } catch (e) {
-    about.error = errorMessage(e);
+    aboutStore.set({ error: errorMessage(e) });
     return;
   }
-  if (about.info.update_check) await checkForUpdates();
-  else about.state = "off";
+  aboutStore.set({ info });
+  if (info.update_check) await checkForUpdates();
+  else aboutStore.set({ state: "off" });
 }
 
 /** Ask GitHub for newer releases. Also used by "Check now", even when the start-up check is off. */
 export async function checkForUpdates(): Promise<void> {
-  about.state = "checking";
-  about.error = "";
+  aboutStore.set({ state: "checking", error: "" });
   try {
     const u = await api.checkUpdates();
-    about.newer = u.newer;
-    about.state = u.newer.length ? "available" : "current";
+    aboutStore.set({ newer: u.newer, state: u.newer.length ? "available" : "current", checkedAt: new Date() });
   } catch (e) {
-    about.error = errorMessage(e);
-    about.state = "error";
+    aboutStore.set({ error: errorMessage(e), state: "error", checkedAt: new Date() });
   }
-  about.checkedAt = new Date();
 }
 
 export interface ChangeSection {
@@ -60,19 +65,19 @@ export function parseChangelog(md: string): ChangeEntry[] {
     const line = raw.trim();
     const ver = line.match(/^##\s+\[?v?(\d+\.\d+\.\d+)\]?(?:\([^)]*\))?\s*(?:\((\d{4}-\d{2}-\d{2})\))?/);
     if (ver) {
-      out.push({ version: ver[1], date: ver[2] ?? "", sections: [] });
+      out.push({ version: ver[1]!, date: ver[2] ?? "", sections: [] });
       section = null;
       continue;
     }
     const sec = line.match(/^###\s+(.+)$/);
     if (sec && out.length) {
-      section = { title: sec[1], items: [] };
-      out[out.length - 1].sections.push(section);
+      section = { title: sec[1]!, items: [] };
+      out[out.length - 1]!.sections.push(section);
       continue;
     }
     const item = line.match(/^[*-]\s+(.+)$/);
     if (item && section) {
-      const text = item[1]
+      const text = item[1]!
         .replace(/\s*\(\[[0-9a-f]{7,}\]\([^)]*\)\)/g, "")
         .replace(/,?\s*closes \[#\d+\]\([^)]*\)/gi, "")
         .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")

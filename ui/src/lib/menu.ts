@@ -18,9 +18,11 @@ export interface Page {
 export const NOT_IN_BIOS = "__absent";
 
 export const pageKey = (path: string[]) => path.join(" › ");
+/** A page's path for display, or `empty` when the setting is on no page. */
+export const pageLabel = (path: string[], empty = "Setup") => (path.length ? pageKey(path) : empty);
 
 function cmp(a: number[], b: number[]): number {
-  for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i];
+  for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i]! - b[i]!;
   return a.length - b.length;
 }
 
@@ -39,11 +41,12 @@ function pageOrders<T extends Located>(items: T[]): Map<string, number[]> {
 /** Items sorted page by page (pages in menu order), then by position on the page. */
 export function menuSort<T extends Located>(items: T[]): T[] {
   const po = pageOrders(items);
+  // Each item's page order, looked up once rather than per comparison.
+  const page = new Map<T, number[]>();
+  for (const s of items) if (s.menu) page.set(s, po.get(pageKey(s.menu.path)) ?? []);
   return [...items].sort((a, b) => {
     if (!a.menu || !b.menu) return a.menu ? -1 : b.menu ? 1 : 0;
-    const pa = po.get(pageKey(a.menu.path)) ?? [];
-    const pb = po.get(pageKey(b.menu.path)) ?? [];
-    return cmp(pa, pb) || cmp(a.menu.order, b.menu.order);
+    return cmp(page.get(a)!, page.get(b)!) || cmp(a.menu.order, b.menu.order);
   });
 }
 
@@ -62,7 +65,7 @@ export function menuPages<T extends Located>(items: T[]): Page[] {
       const ak = pageKey(path.slice(0, d));
       if (!seen.has(ak) && !po.has(ak)) {
         seen.add(ak);
-        out.push({ key: ak, path: path.slice(0, d), title: path[d - 1], depth: d - 1, heading: true });
+        out.push({ key: ak, path: path.slice(0, d), title: path[d - 1]!, depth: d - 1, heading: true });
       }
     }
     seen.add(k);
@@ -73,17 +76,17 @@ export function menuPages<T extends Located>(items: T[]): Page[] {
 
 /** Section heading to print before item i of an already-sorted list, if it starts a new section. */
 export function sectionBefore<T extends Located>(list: T[], i: number): string | null {
-  const s = list[i].menu;
+  const s = list[i]?.menu ?? null;
   if (!s?.section) return null;
-  const prev = i > 0 ? list[i - 1].menu : null;
+  const prev = i > 0 ? (list[i - 1]?.menu ?? null) : null;
   const samePage = prev && pageKey(prev.path) === pageKey(s.path);
   return samePage && prev.section === s.section ? null : s.section;
 }
 
 /** Page heading to print before item i (when a list spans several pages). */
 export function pageBefore<T extends Located>(list: T[], i: number): string[] | null {
-  const s = list[i].menu;
-  const prev = i > 0 ? list[i - 1].menu : null;
+  const s = list[i]?.menu ?? null;
+  const prev = i > 0 ? (list[i - 1]?.menu ?? null) : null;
   if (!s) return prev || i === 0 ? [] : null;
   return prev && pageKey(prev.path) === pageKey(s.path) ? null : s.path;
 }
