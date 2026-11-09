@@ -1,0 +1,276 @@
+/* OCB Inspector: circuit-board layout in thermal-camera colours.
+   Light is the default; data-theme on <html> picks light, dark or system (see theme.ts). */
+:root {
+  color-scheme: light;
+  --paper: #f4f2fa;
+  --surface: #ffffff;
+  --sunk: #ece9f6;
+  --ink: #17142e;
+  --ink-quiet: #57527a;
+  --ink-faint: #6e6990;
+  --rule: #e1ddf0;
+  --rule-strong: #cfcae4;
+  /* Interaction ink: selection, current page, focus, links. */
+  --accent: #a8420c;
+  --accent-soft: #fff1e6;
+  /* Primary actions and staged edits: a filled "hot" chip with dark text. */
+  --hot: #f5b940;
+  --on-hot: #17142e;
+  /* Board traces and the heat ramp (cold = stock, hot = changed). */
+  --trace: #e0601f;
+  --c0: #cfcaee;
+  --c1: #9c86d6;
+  --c2: #c0367f;
+  --c3: #e0601f;
+  --c4: #f5b940;
+  --amber: #8a5a00;
+  --amber-soft: #f8eccf;
+  --red: #b8243a;
+  --red-soft: #fcebee;
+  --green: #13795b;
+  /* Differs from the BIOS's optimized defaults: information, not a warning. */
+  --mod: #a8420c;
+  --mod-soft: #fff0e5;
+  --focus: #c2521a;
+
+  --font-ui: "Oxanium Variable", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Azeret Mono Variable", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --fs-small: 12px;
+  --fs-body: 14px;
+  --fs-lead: 16px;
+  --fs-title: 20px;
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --row: 40px;
+  --radius: 4px;
+  --radius-lg: 6px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #0b0a1c;
+  --surface: #110f26;
+  --sunk: #17153a;
+  --ink: #f1eeff;
+  --ink-quiet: #ada8cc;
+  --ink-faint: #8e89b0;
+  --rule: #1d1b3b;
+  --rule-strong: #2b2856;
+  --accent: #ffb37a;
+  --accent-soft: #221d4a;
+  --hot: #ffd98a;
+  --on-hot: #0b0a1c;
+  --trace: #f06a2e;
+  --c0: #2c2a6b;
+  --c1: #5b3790;
+  --c2: #b4307a;
+  --c3: #f06a2e;
+  --c4: #ffd98a;
+  --amber: #e3b25a;
+  --amber-soft: #3a2f1a;
+  --red: #ff8a98;
+  --red-soft: #3d1a26;
+  --green: #8ef0c0;
+  --mod: #ffb37a;
+  --mod-soft: #2b1a24;
+  --focus: #ffb37a;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] {
+    color-scheme: dark;
+    --paper: #0b0a1c;
+    --surface: #110f26;
+    --sunk: #17153a;
+    --ink: #f1eeff;
+    --ink-quiet: #ada8cc;
+    --ink-faint: #8e89b0;
+    --rule: #1d1b3b;
+    --rule-strong: #2b2856;
+    --accent: #ffb37a;
+    --accent-soft: #221d4a;
+    --hot: #ffd98a;
+    --on-hot: #0b0a1c;
+    --trace: #f06a2e;
+    --c0: #2c2a6b;
+    --c1: #5b3790;
+    --c2: #b4307a;
+    --c3: #f06a2e;
+    --c4: #ffd98a;
+    --amber: #e3b25a;
+    --amber-soft: #3a2f1a;
+    --red: #ff8a98;
+    --red-soft: #3d1a26;
+    --green: #8ef0c0;
+    --mod: #ffb37a;
+    --mod-soft: #2b1a24;
+    --focus: #ffb37a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: var(--fs-body) / 1.45 var(--font-ui);
+  font-weight: 450;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+#app {
+  height: 100%;
+}
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+}
+p {
+  margin: 0;
+}
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  letter-spacing: -0.02em;
+}
+/* The thermal ramp, as a thin rule. */
+.ramp {
+  height: 3px;
+  background: linear-gradient(90deg, var(--c0), var(--c1), var(--c2), var(--c3), var(--c4));
+}
+/* Heat levels: stock Auto, stock fixed value, off stock, staged edit. */
+.heat-0 { --heat: var(--c0); }
+.heat-1 { --heat: var(--c1); }
+.heat-3 { --heat: var(--c3); }
+.heat-4 { --heat: var(--c4); }
+/* "Reviewed" badge: a setting whose values, units and dependencies were checked (recipe). */
+.rv {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--trace);
+  border-radius: 3px;
+  color: var(--trace);
+  font-size: 10.5px;
+  line-height: 15px;
+  vertical-align: 1px;
+}
+/* Left menu rail (Inspect, Browse). Keeps the scrollbar's space even when it is not shown, so
+   the menu never reflows. */
+.rail {
+  padding: var(--s3) var(--s2);
+  border-right: 1px solid var(--rule);
+  overflow: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+.railhead {
+  padding: 0 var(--s3) var(--s2);
+  font-size: var(--fs-small);
+}
+/* A stored byte, drawn as a solder pad. */
+.solder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 24px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: linear-gradient(var(--c4), var(--c3));
+  color: var(--on-hot);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 12px;
+}
+.quiet {
+  color: var(--ink-quiet);
+}
+.faint {
+  color: var(--ink-faint);
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  height: 32px;
+  padding: 0 var(--s3);
+  border-radius: var(--radius);
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--ink-faint);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn.primary {
+  background: var(--hot);
+  border-color: var(--hot);
+  color: var(--on-hot);
+  font-weight: 600;
+}
+.btn.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.btn.ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-quiet);
+}
+.btn.ghost:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--rule);
+}
+
+input[type="search"],
+input[type="number"],
+select {
+  height: 32px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 0 var(--s2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

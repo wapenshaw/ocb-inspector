@@ -1,0 +1,23 @@
+# Complete vendor BIOS images approved for writing OC profiles.
+#
+# The app reads this file at runtime; nothing is built in. Without it every image is
+# inspect-only. Locations, in order: `ocbi --approvals <path>`, the OCB_APPROVALS environment
+# variable, then config/approved-images.toml beside the running executable (the app is
+# portable: put this file in a config folder next to ocbi.exe / ocb-inspector.exe).
+#
+# Each entry approves one exact image (BIOS ID plus SHA-256 of the whole file) for one recipe
+# adapter. An entry only takes effect on boards that adapter's recipes were reviewed on
+# (msi-7d91: MS-7D91), so adding an image of another board here unlocks nothing. Any invalid
+# entry rejects the whole file. Add an image only after reviewing the recipes against it.
+
+[[image]]
+bios_id = "E7D91IMS.HI0"
+sha256 = "69aa483fcdf5c9528941283ca5158770de9191faa086e17e22af50600aab4104"
+adapter = "msi-7d91"
+note = "MPG Z790 EDGE WIFI / MAG Z790 TOMAHAWK WIFI V17.I; recipes reviewed (analysis/evidence)"
+
+[[image]]
+bios_id = "E7D91IMS.HJ0"
+sha256 = "fdd8bbf24b06370478261a58b8034dca7d713aea4e41be0e2080efe9fd5b38fe"
+adapter = "msi-7d91"
+note = "MPG Z790 EDGE WIFI / MAG Z790 TOMAHAWK WIFI V17.J; recipes reviewed (analysis/evidence)"

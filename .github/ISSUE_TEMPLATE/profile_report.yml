@@ -1,0 +1,38 @@
+name: Profile from another board
+description: Share an .ocb profile from a board or BIOS generation the app can't open yet.
+labels: [profile]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Profiles open today only for Intel 600/700-series boards with the 961-byte CpuSetup
+        layout. A real profile from another board is what lets support be added. A profile
+        holds only BIOS settings and the CPU name; it holds nothing personal.
+  - type: input
+    id: board
+    attributes:
+      label: Board
+      placeholder: MAG B650 TOMAHAWK WIFI
+    validations:
+      required: true
+  - type: input
+    id: bios
+    attributes:
+      label: BIOS version
+      description: As shown in the BIOS or on MSI's download page, plus a link to that download.
+    validations:
+      required: true
+  - type: textarea
+    id: changed
+    attributes:
+      label: What you changed before saving
+      description: For example "Load Optimized Defaults, then CPU Lite Load Mode 5". Two profiles that differ in one known setting are the most useful.
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Profiles
+      description: Zip the .ocb files and drop the zip here.
+    validations:
+      required: true
