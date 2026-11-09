@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/wapenshaw/ocb-inspector/compare/v0.1.0...v0.2.0) (2026-11-09)
+
+
+### Features
+
+* **desktop:** show the version and check for updates ([beb7e72](https://github.com/wapenshaw/ocb-inspector/commit/beb7e7280e169b98787ca49e2fc1ef09935b5aa0))
+
 ## 0.1.0 (2026-11-09)
 
 
