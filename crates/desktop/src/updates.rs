@@ -28,7 +28,7 @@ pub fn app_info() -> AppInfo {
         version: env!("CARGO_PKG_VERSION"),
         changelog: include_str!("../../../CHANGELOG.md"),
         repo_url: REPO_URL,
-        update_check: ocb_core::settings::active().settings.update_check != Some(false),
+        update_check: ocb_core::settings::active().settings.update_check_on(),
     }
 }
 

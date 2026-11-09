@@ -36,7 +36,7 @@ Run the offline checks from the repository root:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
-(cd ui && pnpm check)
+(cd ui && pnpm typecheck && pnpm test)
 python -I tools/third_party_notices.py --check   # after dependency changes; regenerate without --check
 git diff --check
 ```

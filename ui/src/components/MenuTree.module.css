@@ -1,0 +1,123 @@
+/* Geometry: trunk at x=8; a page at depth d has its via centred at x = 8 + d*16. */
+.tree {
+  --trunk: 8px;
+  --step: 16px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+}
+/* One continuous trunk for the whole menu. */
+.tree::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--trunk) - 1px);
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--trace);
+}
+.node {
+  --x: calc(var(--trunk) + var(--depth) * var(--step));
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  padding-left: calc(var(--x) + 9px);
+}
+/* Branch from the trunk out to this page's via. */
+.node::after {
+  content: "";
+  position: absolute;
+  left: var(--trunk);
+  top: 16px;
+  width: calc(var(--depth) * var(--step));
+  height: 2px;
+  background: var(--trace);
+}
+/* The via: hollow on every page, filled on the open one, a square pad on a section that only groups. */
+.node::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  left: calc(var(--x) - 6px);
+  top: 11px;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--trace);
+  background: var(--paper);
+}
+.node.heading::before {
+  border-radius: 2px;
+  background: var(--trace);
+}
+.node.on::before {
+  background: var(--hot);
+  border-color: var(--hot);
+}
+.twist {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+button.twist svg {
+  transition: transform 0.12s ease;
+}
+button.twist.open svg {
+  transform: rotate(90deg);
+}
+button.twist:hover {
+  color: var(--ink);
+}
+.row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 34px;
+  padding: 6px var(--s2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.row:hover {
+  background: var(--sunk);
+}
+.heading .row {
+  color: var(--ink-quiet);
+  font-weight: 600;
+}
+/* The open page changes colour only, never weight: bolder text would rewrap and shift the menu. */
+.on .row {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.title {
+  min-width: 0;
+  line-height: 1.25;
+}
+.count {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+  color: var(--ink-faint);
+  font-size: 11.5px;
+}
+@media (prefers-reduced-motion: reduce) {
+  button.twist svg {
+    transition: none;
+  }
+}

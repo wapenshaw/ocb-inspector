@@ -1,0 +1,170 @@
+.app {
+  display: grid;
+  grid-template-rows: 52px 3px 1fr;
+  height: 100%;
+}
+.top {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: 0 var(--s4);
+  background: var(--surface);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding-right: var(--s4);
+  height: 100%;
+  border-right: 1px solid var(--rule);
+}
+.logo {
+  display: block;
+  border-radius: 7px;
+  /* The tile is near the dark header colour; the outline keeps its edge visible. */
+  box-shadow: 0 0 0 1px var(--rule-strong);
+}
+.title {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.name {
+  font-weight: 700;
+  font-size: var(--fs-lead);
+  letter-spacing: 0.01em;
+}
+.tagline {
+  font-size: var(--fs-small);
+  color: var(--ink-faint);
+}
+.theme {
+  display: inline-flex;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.theme button {
+  height: 30px;
+  padding: 0 var(--s3);
+  border: 0;
+  border-left: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink-quiet);
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+.theme button:first-child {
+  border-left: 0;
+}
+/* Selection is colour only: a bolder label would be wider and nudge its neighbours. */
+.theme button.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.theme button:focus-visible {
+  outline-offset: -2px;
+}
+/* The badge sits on the pill's corner, so it appearing never widens the header. */
+.version {
+  position: relative;
+  overflow: visible;
+}
+.version button {
+  display: inline-flex;
+  align-items: center;
+  color: var(--ink);
+  font-weight: 600;
+  border-radius: inherit;
+}
+.badge {
+  position: absolute;
+  top: -8px;
+  right: -4px;
+  padding: 0 6px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px var(--surface);
+  background: var(--hot);
+  color: var(--on-hot);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.views {
+  display: flex;
+  gap: var(--s2);
+}
+.views button,
+.theme button {
+  white-space: nowrap;
+}
+.theme,
+.views,
+.brand {
+  flex: none;
+}
+.offline {
+  font-size: var(--fs-small);
+  margin-right: auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.narrow {
+  display: none;
+}
+.warn {
+  color: var(--amber);
+}
+/* Down to the 1024px minimum window: tighter header, short labels. */
+@media (max-width: 1240px) {
+  .top {
+    gap: var(--s2);
+  }
+  .tagline,
+  .wide {
+    display: none;
+  }
+  .narrow {
+    display: inline;
+  }
+  .views {
+    gap: 6px;
+  }
+  .views button {
+    padding: 0 10px;
+  }
+  .theme button {
+    padding: 0 var(--s2);
+  }
+}
+.views button {
+  height: 36px;
+  padding: 0 var(--s3);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+.views button:hover {
+  border-color: var(--ink-faint);
+}
+.views button.on {
+  background: var(--hot);
+  border-color: var(--hot);
+  color: var(--on-hot);
+}
+.main {
+  min-height: 0;
+}
+.view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.view[hidden] {
+  display: none;
+}

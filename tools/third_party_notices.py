@@ -123,7 +123,7 @@ def npm_packages() -> list[dict]:
                     bundled.add(hit.group(1))
     out = []
     for name in sorted(bundled):
-        # Resolve through svelte's own node_modules too (pnpm keeps transitive deps nested).
+        # Resolve through pnpm's store too (pnpm keeps transitive deps nested).
         candidates = [ui / "node_modules" / name]
         candidates += list((ui / "node_modules/.pnpm").glob(f"*/node_modules/{name}"))
         d = next(c for c in candidates if (c / "package.json").is_file())

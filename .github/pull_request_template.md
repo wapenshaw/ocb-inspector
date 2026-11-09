@@ -35,7 +35,7 @@ contract change, a renamed release asset.
 
 - [ ] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`
       and `cargo test --workspace --locked` pass locally.
-- [ ] `pnpm check` passes in `ui/` (UI changes).
+- [ ] `pnpm typecheck` and `pnpm test` pass in `ui/` (UI changes).
 - [ ] `python -I tools/third_party_notices.py --check` passes (dependency changes).
 - [ ] One logical change per commit, Conventional Commits, no co-author
       trailer. **PRs are rebased, never squashed or merged**, so the commit

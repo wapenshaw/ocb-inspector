@@ -1,0 +1,62 @@
+.settings h2 {
+  font-size: var(--fs-lead);
+  font-weight: 600;
+  margin-bottom: var(--s3);
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  cursor: pointer;
+}
+.row input {
+  margin-top: 4px;
+  flex: none;
+}
+.row input:disabled,
+.row:has(input:disabled) {
+  cursor: default;
+}
+.text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+.text :global(.quiet) {
+  font-size: var(--fs-small);
+}
+.name {
+  font-weight: 600;
+}
+.confirm {
+  padding: var(--s3);
+  border-left: 3px solid var(--amber);
+  background: var(--amber-soft);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.confirm p {
+  font-size: var(--fs-small);
+  max-width: 62ch;
+}
+.buttons {
+  display: flex;
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+.foot {
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;
+  padding-top: var(--s2);
+  border-top: 1px solid var(--rule);
+}

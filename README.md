@@ -61,8 +61,8 @@ wanted](#help-wanted-profiles-from-other-boards)).
   and off by default (see [Read-only by default](#read-only-by-default)).
 - **Tells you about new versions.** The version button in the header opens the changelog. At
   start the desktop app asks GitHub for the list of releases, which is the only thing it ever
-  sends over the network; it downloads nothing itself. Add `"update_check": false` to
-  `config/settings.json` to turn that off.
+  sends over the network; it downloads nothing itself. Turn that off under Settings on the same
+  page, or with `"update_check": false` in `config/settings.json`.
 
 `ocb-inspector` is the desktop app and `ocbi` the command-line tool (JSON output for scripts).
 Both use the same Rust core.
@@ -120,7 +120,9 @@ Defaults" value and whether they differ), and compare two profiles, even from di
 versions. Nothing is ever written.
 
 Editing a profile and porting it to another BIOS version are **experimental**. They stay hidden, and
-the CLI refuses `profile build` and `migrate build`, unless `config/settings.json` contains:
+the CLI refuses `profile build` and `migrate build`, unless `config/settings.json` contains the
+following (the desktop app's "Experimental writing" switch, under Settings on the version page,
+writes it for you):
 
 ```json
 { "experimental": { "writing": true } }

@@ -127,7 +127,7 @@ body {
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
-#app {
+#root {
   height: 100%;
 }
 h1,
@@ -273,4 +273,138 @@ select {
     transition: none !important;
     animation: none !important;
   }
+}
+/* SwapLabel: both labels take the same cell, so the wider one sets the width. */
+.swap {
+  display: inline-grid;
+}
+.swap > * {
+  grid-area: 1 / 1;
+}
+.swap > [aria-hidden="true"] {
+  visibility: hidden;
+}
+
+/* Workspace layout, shared by every view. A view is a flex column (App's .view): fixed bars
+   (.strip, .bar) keep their height and one part (.fill) takes the rest, so no view works out its
+   height from the size of its bars. */
+.fill {
+  flex: 1;
+  min-height: 0;
+}
+.col {
+  display: flex;
+  flex-direction: column;
+}
+/* A scrolling area. The scrollbar's space is kept even when no scrollbar is shown, so a search
+   or filter that changes the length never reflows the content. */
+.scroller {
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+/* The open files, along the top of a view. */
+.strip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s3);
+  height: 48px;
+  min-width: 0;
+  padding: 0 var(--s4);
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink-quiet);
+}
+.strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.spacer {
+  flex: 1;
+}
+/* Actions along the bottom of a view (writing on). */
+.bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s2);
+  height: 56px;
+  padding: 0 var(--s4);
+  border-top: 1px solid var(--rule);
+  background: var(--surface);
+}
+/* A table that fills the rest of its view and scrolls on its own. */
+.tablewrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  padding: 0 var(--s4) var(--s4);
+}
+.empty {
+  padding: var(--s5) var(--s3);
+}
+.more {
+  padding: var(--s3);
+}
+.problem {
+  padding: var(--s3) var(--s4);
+  border-left: 3px solid var(--red);
+  background: var(--red-soft);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+/* Segmented radio group (Show: All / Not at default / ...). Selection is colour only: a bolder
+   label would be wider and nudge the next one. */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.seg label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 var(--s3);
+  border-left: 1px solid var(--rule);
+  cursor: pointer;
+}
+.seg label:first-child {
+  border-left: 0;
+}
+.seg label.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.seg label.off {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.seg input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.seg label:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+/* Details of the selected row, on the right (Inspect, Browse). */
+.inspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s4) var(--s4) var(--s5);
+  border-left: 1px solid var(--rule);
+  background: var(--surface);
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.inspector h2 {
+  font-size: var(--fs-lead);
+}
+.inspector h3 {
+  font-size: var(--fs-body);
+  margin-top: var(--s3);
 }
