@@ -198,11 +198,16 @@ fn walk_fv(
             }
             (guid_string(name), ftype, size, hdr)
         };
-        if size < hdr || o + size > end {
-            w.diagnostics
-                .push(format!("{path}: stopped at invalid file size at 0x{o:x}"));
-            break;
-        }
+        // The size is untrusted (FFS3 sizes are 64-bit): an end past the volume, or one that
+        // overflows, stops the walk.
+        let file_end = match o.checked_add(size) {
+            Some(e) if size >= hdr && e <= end => e,
+            _ => {
+                w.diagnostics
+                    .push(format!("{path}: stopped at invalid file size at 0x{o:x}"));
+                break;
+            }
+        };
         if ftype != FFS_TYPE_PAD {
             let idx = w.files.len();
             w.files.push(FfsFile {
@@ -215,13 +220,13 @@ fn walk_fv(
                 w,
                 buf,
                 o + hdr,
-                o + size,
+                file_end,
                 idx,
                 &format!("{path}/{guid}"),
                 depth + 1,
             )?;
         }
-        o = align_up(o + size, 8).ok_or_else(|| Error::malformed("fv", "overflow"))?;
+        o = align_up(file_end, 8).ok_or_else(|| Error::malformed("fv", "overflow"))?;
     }
     Ok(())
 }
@@ -254,10 +259,10 @@ fn walk_sections(
             }
             (stype, size, hdr)
         };
-        if size < hdr || o + size > end {
+        let Some(section_end) = o.checked_add(size).filter(|&e| size >= hdr && e <= end) else {
             break;
-        }
-        let body = (o + hdr, o + size);
+        };
+        let body = (o + hdr, section_end);
         match stype {
             SECTION_PE32 => w.files[file].pe32.push(Pe32Ref {
                 buf,
@@ -365,7 +370,7 @@ fn walk_sections(
             }
             _ => {}
         }
-        o = align_up(o + size, 4).ok_or_else(|| Error::malformed("section", "overflow"))?;
+        o = align_up(section_end, 4).ok_or_else(|| Error::malformed("section", "overflow"))?;
     }
     Ok(())
 }
@@ -469,5 +474,23 @@ mod tests {
         let w = walk_image(&image, Limits::default()).unwrap();
         assert_eq!(w.files.len(), 1);
         assert_eq!(w.files[0].guid, guid_string(&[0x11; 16]));
+    }
+
+    #[test]
+    fn an_ffs3_size_that_overflows_stops_the_walk() {
+        // FFS3 large file (attribute bit 0, zero 24-bit size) claiming u64::MAX bytes: adding it
+        // to the offset overflows, which must end the walk rather than wrap past the bounds check.
+        let raw = file([0x11; 16], 0x01, &[]);
+        let mut huge = [0x22u8; 16].to_vec();
+        huge.extend_from_slice(&[0, 0, 0x01, 0x01, 0, 0, 0, 0xF8]);
+        huge.extend_from_slice(&u64::MAX.to_le_bytes());
+        let image = [vec![0u8; 16], volume(&[raw, huge])].concat();
+        let w = walk_image(&image, Limits::default()).unwrap();
+        assert_eq!(w.files.len(), 1);
+        assert!(
+            w.diagnostics
+                .iter()
+                .any(|d| d.contains("invalid file size"))
+        );
     }
 }
