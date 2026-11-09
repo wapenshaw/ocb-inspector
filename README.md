@@ -56,9 +56,13 @@ wanted](#help-wanted-profiles-from-other-boards)).
 - **Compare two profiles.** Side by side, even across BIOS versions: settings are matched by
   their place in the menus, so a profile saved before a BIOS update lines up with one saved
   after it.
-- **Read-only and offline.** Nothing is written and no file leaves your computer. Editing a
-  profile and porting it to a new BIOS version exist, but are experimental and off by default
-  (see [Read-only by default](#read-only-by-default)).
+- **Read-only, and your files stay on your computer.** Nothing is written and nothing is
+  uploaded. Editing a profile and porting it to a new BIOS version exist, but are experimental
+  and off by default (see [Read-only by default](#read-only-by-default)).
+- **Tells you about new versions.** The version button in the header opens the changelog. At
+  start the desktop app asks GitHub for the list of releases, which is the only thing it ever
+  sends over the network; it downloads nothing itself. Add `"update_check": false` to
+  `config/settings.json` to turn that off.
 
 `ocb-inspector` is the desktop app and `ocbi` the command-line tool (JSON output for scripts).
 Both use the same Rust core.
@@ -102,7 +106,7 @@ There is no installer. Keep the programs together in one folder, with everything
 | `ocbi`, `ocb-inspector` (`.exe` on Windows) | the programs |
 | `THIRD-PARTY-NOTICES.txt` | licences of the third-party code inside the programs; required when you give the programs to anyone |
 | `config/approved-images.toml` | optional: the BIOS images that may be written to (the repository's `config/approved-images.toml`) |
-| `config/settings.json` | optional: the experimental writing switch (below); the desktop app also keeps your colour mode here |
+| `config/settings.json` | optional: the experimental writing switch (below) and `"update_check": false`; the desktop app also keeps your colour mode here |
 | `config/webview-data/` | created by the desktop app: its web view's data (WebView2 on Windows, WebKitGTK on Linux) |
 
 The desktop app writes only inside `config`, never to `%APPDATA%`, `%LOCALAPPDATA%` or `~/.local`,
