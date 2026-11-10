@@ -2233,7 +2233,7 @@ dependencies = [
 
 [[package]]
 name = "ocb-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "lzma-rs",
  "schemars 1.2.3",
@@ -2246,7 +2246,7 @@ dependencies = [
 
 [[package]]
 name = "ocbi-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "ocb-core",
@@ -2257,7 +2257,7 @@ dependencies = [
 
 [[package]]
 name = "ocbi-desktop"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ocb-core",
  "rfd",
