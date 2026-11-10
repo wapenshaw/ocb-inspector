@@ -61,7 +61,7 @@ export function PairPicker({
     } catch (e) {
       setError({
         text: errorMessage(e).replace(/^BIOS\/profile identity mismatch: /, ""),
-        mismatch: isCommandError(e) && e.exit_code === 4,
+        mismatch: isCommandError(e) && e.code === "identity_mismatch",
       });
     } finally {
       setBusy("");
@@ -219,7 +219,8 @@ export function PairPicker({
               </button>
             </>
           )}
-          {onAnalyze && (
+          {/* Not on a mismatch: the analysis follows the same identity rule and would read no setting. */}
+          {onAnalyze && !error.mismatch && (
             <button className="btn" onClick={() => onAnalyze(bios, profile)}>
               <Icon name="file" /> Analyze profile experimentally
             </button>
