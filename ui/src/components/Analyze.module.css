@@ -364,73 +364,11 @@
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-/* Start screen: which files to choose. */
-.start {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s4);
-  max-width: 880px;
-  margin: 0 auto;
-  padding: var(--s6) var(--s4);
-}
-.intro h1 {
-  font-size: var(--fs-title);
-}
-.intro p {
-  margin-top: var(--s2);
-}
-.slots {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--s4);
-}
-.slot {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  min-height: 150px;
-  padding: var(--s3) var(--s4);
-  text-align: left;
-  background: transparent;
-  border: 1px dashed var(--rule-strong);
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-}
-.slot:hover {
-  border-color: var(--accent);
-}
-.slot.filled {
-  border-style: solid;
-  border-color: var(--rule);
-  background: var(--surface);
-}
-.kind {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--ink-quiet);
-  font-size: var(--fs-small);
-}
-.cta {
-  color: var(--accent);
-  font-weight: 600;
-  font-size: var(--fs-lead);
-}
 .meta {
   font-size: var(--fs-small);
   overflow-wrap: anywhere;
 }
-.alt {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s3);
-}
 @media (max-width: 720px) {
-  .slots {
-    grid-template-columns: 1fr;
-  }
   .split {
     flex-direction: column;
   }

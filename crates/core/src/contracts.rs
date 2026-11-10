@@ -253,12 +253,13 @@ pub struct PlatformInfo {
 }
 
 /// Whether profiles from a board have ever been examined.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProfileEvidence {
     /// The board is one the reviewed adapter covers (real profiles were examined).
     Examined,
     /// Profiles are supported by layout only; no profile from this board has been examined.
+    #[default]
     Untested,
 }
 
@@ -855,7 +856,7 @@ impl RawInt {
     }
 }
 
-/// Read-only interpretation of a profile against a BIOS's own definitions. Never a `Session`,
+/// Read-only interpretation of a profile against a BIOS's own definitions,
 /// never an input to editing, migration or export.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExperimentalInspectPayload {
@@ -1093,6 +1094,30 @@ pub struct StoreInfo {
     pub field_count: usize,
 }
 
+/// A reviewed, read-only recipe interpretation of one or more generic fields.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ReviewedInterpretation {
+    pub setting_id: String,
+    pub label: String,
+    pub value: Value,
+    pub default_value: Option<Value>,
+    pub differs_from_default: Option<bool>,
+    pub baseline_value: Option<Value>,
+    pub evidence: Vec<String>,
+    /// Whether profiles from this board were examined for the recipe.
+    #[serde(default)]
+    pub board_evidence: ProfileEvidence,
+    pub components: Vec<ReviewedComponent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ReviewedComponent {
+    pub store: String,
+    pub store_offset: u16,
+    pub width_bits: u16,
+    pub span: Range,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExperimentalField {
     /// Stable key including provenance.
@@ -1139,6 +1164,8 @@ pub struct ExperimentalField {
     /// default: nothing is known. Only meaningful when the baseline was saved at BIOS defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub baseline_off_default: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed: Option<ReviewedInterpretation>,
     pub hidden: bool,
     pub conditional: bool,
     pub callback: bool,

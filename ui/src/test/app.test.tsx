@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "../App";
 import { aboutStore } from "../lib/updates";
@@ -40,5 +40,14 @@ describe("header", () => {
     await userEvent.click(screen.getByRole("radio", { name: "Dark" }));
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(screen.getByRole("radio", { name: "Dark" })).toHaveAttribute("aria-checked", "true");
+  });
+});
+
+describe("navigation", () => {
+  it("has one entry for reading a profile: no Analyze button", () => {
+    render(<App />);
+    const nav = screen.getByRole("navigation", { name: "Workspace" });
+    expect(within(nav).queryByRole("button", { name: /analy[sz]e/i })).toBeNull();
+    expect(within(nav).getByRole("button", { name: "Inspect" })).toHaveAttribute("aria-current", "page");
   });
 });

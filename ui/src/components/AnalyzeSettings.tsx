@@ -26,6 +26,7 @@ import { MoreRows, ROW_LIMIT } from "./MoreRows";
 import { Icon } from "./Icon";
 import { SegGroup } from "./SegGroup";
 import { Status } from "./Status";
+import { ReviewedReading, ReviewedDetails } from "./ReviewedReading";
 import s from "./Analyze.module.css";
 
 export interface SettingsFilter {
@@ -120,6 +121,13 @@ export function AnalyzeSettings({ items, lookup, filter, onFilter, selected, onS
           </p>
         )}
 
+        {!hasBaseline && counts.noDefault > 0 && (
+          <p className={`quiet ${s.crossnote}`} data-testid="no-default-note">
+            {counts.noDefault} settings have no BIOS default to compare with, so they cannot be marked as differing. Add a baseline profile saved
+            at BIOS defaults to compare them.
+          </p>
+        )}
+
         <div className="tablewrap">
           <table className={s.grid} onKeyDown={onKeyDown}>
             <colgroup>
@@ -211,6 +219,7 @@ const FieldRow = memo(function FieldRow({ it, selected, onSelect, baseline }: { 
       </td>
       <td>
         <span className={cx(numeric && "mono", f.state !== "decoded" && s.notDecoded)}>{it.value}</span>
+        <ReviewedReading reading={f.reviewed} source="saved" originalText={it.value} />
         {f.state !== "decoded" && (
           <span className={s.reason}>
             {FIELD_STATE_LABEL[f.state]}
@@ -221,6 +230,7 @@ const FieldRow = memo(function FieldRow({ it, selected, onSelect, baseline }: { 
       <td className="mono">{f.raw?.hex ?? "—"}</td>
       <td>
         <span className={numeric ? "mono" : undefined}>{it.defaultText}</span>
+        <ReviewedReading reading={f.reviewed} source="default" originalText={it.defaultText} />
         {f.differs_from_default === true && (
           <span className={s.reason}>
             <Status tone="mod" text="Differs" />
@@ -232,6 +242,7 @@ const FieldRow = memo(function FieldRow({ it, selected, onSelect, baseline }: { 
           {typeof f.differs_from_baseline === "boolean" ? (
             <>
               <span className={numeric ? "mono" : undefined}>{it.baselineText}</span>
+              <ReviewedReading reading={f.reviewed} source="baseline" originalText={it.baselineText} />
               {f.differs_from_baseline && (
                 <span className={s.reason}>
                   <Status tone="mod" text="Differs" />
@@ -260,10 +271,12 @@ function Chain({ it, lookup }: { it: FieldItem; lookup: Lookup }) {
   return (
     <>
       <h2>{f.label}</h2>
+      <ReviewedDetails reading={f.reviewed} />
       {f.help && <p className="quiet">{f.help}</p>}
       <ol className={s.chain}>
         <li>
           <h3>Bytes in the profile</h3>
+          <p className="mono">Stored: {f.raw ? `${f.raw.dec} (${f.raw.hex})` : "Unknown"}; optimized default: {f.default_raw ? `${f.default_raw.dec} (${f.default_raw.hex})` : "Unknown"}</p>
           {f.span ? (
             <p className="mono">{rangeText(f.span)}</p>
           ) : (
@@ -332,7 +345,7 @@ function Chain({ it, lookup }: { it: FieldItem; lookup: Lookup }) {
 
 const BASIS_LABEL: Record<Evidence["basis"], string> = {
   file_structure: "the file's own structure",
-  reviewed_binding: "a reviewed binding",
+  reviewed_binding: "two agreeing sources",
   firmware_code: "the BIOS's own code and setup data",
   file_comparison: "comparing two files through their BIOS menus and defaults",
   size_only: "matching sizes only",

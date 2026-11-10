@@ -249,7 +249,7 @@ export function AnalyzeSummary({ report, payload, counts, onShowDiffering, onSho
       <Panel title="Coverage">
         <dl className={s.stats}>
             <Stat label="Records" value={coverage.records_total} />
-            <Stat label="Confirmed mapping" value={coverage.records_confirmed} />
+            <Stat label="Cross-checked mapping" value={coverage.records_confirmed} />
             <Stat label="Inferred mapping" value={coverage.records_inferred} />
             <Stat label="Ambiguous mapping" value={coverage.records_ambiguous} />
             <Stat label="Not mapped" value={coverage.records_unmapped} />

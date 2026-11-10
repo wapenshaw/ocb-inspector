@@ -108,6 +108,8 @@ button.twist:hover {
 .title {
   min-width: 0;
   line-height: 1.25;
+  /* A long word breaks instead of running under the count. */
+  overflow-wrap: break-word;
 }
 .count {
   flex: none;

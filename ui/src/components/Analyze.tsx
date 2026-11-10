@@ -1,6 +1,8 @@
-// Experimental, read-only analysis of one profile, optionally with the BIOS image that saved it.
-// Nothing on this screen can edit, port, build or export a profile. Results are interpretations:
-// they are labelled as such, and no verified badge is ever shown here.
+// The automatic fallback of Inspect: a read-only reading of one profile with the BIOS image that
+// saved it, used when the checked reader does not cover the board (or on request). Files are chosen
+// in Inspect's picker; this view only receives them through `open`. Nothing here can edit, port,
+// build or export a profile. Results are interpretations: they are labelled as such, and no
+// verified badge is ever shown here.
 //
 // Every change of input starts a new numbered run (useAction): an answer, or an error, for an
 // earlier run is dropped, and Save is only enabled for the result shown for the current inputs.
@@ -33,7 +35,14 @@ import s from "./Analyze.module.css";
 
 export interface AnalyzeHandle {
   /** Start an analysis with these paths (empty strings mean "not chosen"). */
-  open(bios: string, profile: string): void;
+  /** `fromProfile`: opened from a pair Inspect already shows, so closing goes back to it. */
+  open(bios: string, profile: string, fromProfile?: boolean, set?: number | null): void;
+}
+
+interface AnalyzeProps {
+  ref?: Ref<AnalyzeHandle>;
+  /** Back to the picker, to choose other files. */
+  onClose: () => void;
 }
 
 type View = "summary" | "settings" | "records";
@@ -82,6 +91,8 @@ interface Outcome {
   /** Counted once when the report arrives; the Summary and Settings views and the first filter use it. */
   counts: DefaultCounts;
 }
+const MISMATCH_TITLE = "Profile and BIOS do not match";
+
 interface Failure {
   req: AnalysisRequest;
   title: string;
@@ -112,33 +123,12 @@ interface OptionalFileProps {
   removeText: string;
   onChoose: () => void | Promise<void>;
   onRemove: () => void;
-  /** Start-screen layout: the name sits in the label text and one button adds or changes. */
-  inline?: boolean;
   /** Extra controls after the file's own buttons. */
   children?: ReactNode;
 }
 
-function OptionalFile({ label, hint, path, name, mono, addText, changeText, removeText, onChoose, onRemove, inline, children }: OptionalFileProps) {
+function OptionalFile({ label, hint, path, name, mono, addText, changeText, removeText, onChoose, onRemove, children }: OptionalFileProps) {
   const choose = () => void onChoose();
-  if (inline) {
-    return (
-      <>
-        <span className={`${s.meta} quiet`} title={hint}>
-          {label}
-          {path ? `: ${name}` : ""}
-        </span>
-        <button className="btn ghost" onClick={choose} title={hint}>
-          {path ? changeText : addText}
-        </button>
-        {path && (
-          <button className="btn ghost" onClick={onRemove}>
-            {removeText}
-          </button>
-        )}
-        {children}
-      </>
-    );
-  }
   return (
     <>
       <span className={cx("quiet", s.nowrap)} title={hint}>{label}</span>
@@ -158,7 +148,7 @@ function OptionalFile({ label, hint, path, name, mono, addText, changeText, remo
   );
 }
 
-export function Analyze({ ref }: { ref?: Ref<AnalyzeHandle> }) {
+export function Analyze({ ref, onClose }: AnalyzeProps) {
   const [inputs, setInputs] = useState<Inputs>(NONE);
   // Latest inputs for handlers that await a file dialog first.
   const inputsRef = useRef<Inputs>(NONE);
@@ -167,7 +157,8 @@ export function Analyze({ ref }: { ref?: Ref<AnalyzeHandle> }) {
   // Firmware sets seen for the current BIOS. Kept apart from the result, so the selector stays
   // while a chosen set is being analyzed.
   const [knownSets, setKnownSets] = useState<string[]>([]);
-  const [view, setView] = useState<View>("summary");
+  const [fromProfile, setFromProfile] = useState(false);
+  const [view, setView] = useState<View>("settings");
   const [filter, setFilter] = useState<SettingsFilter>(DEFAULT_FILTER);
   const [selected, setSelected] = useState<string | null>(null);
   const [saved, setSaved] = useState("");
@@ -210,20 +201,16 @@ export function Analyze({ ref }: { ref?: Ref<AnalyzeHandle> }) {
   }
 
   useImperativeHandle(ref, () => ({
-    open(bios, profile) {
-      setView("summary");
+    open(bios, profile, fromProfile = false, set = null) {
+      setFromProfile(fromProfile);
+      setView("settings");
       setFormat(false);
-      start({ profile, bios, set: null, baseline: "", baselineBios: "" });
+      // A new pair starts clean: sets seen for an earlier profile are not offered again.
+      setKnownSets([]);
+      start({ profile, bios, set, baseline: "", baselineBios: "" });
     },
   }));
 
-  async function chooseProfile() {
-    const p = await pickFile("profile");
-    if (p) {
-      setFormat(false);
-      start({ ...inputsRef.current, profile: p });
-    }
-  }
   async function choose(kind: "profile" | "bios", patch: (path: string) => Partial<Inputs>) {
     const p = await pickFile(kind);
     if (p) start({ ...inputsRef.current, ...patch(p) });
@@ -232,17 +219,17 @@ export function Analyze({ ref }: { ref?: Ref<AnalyzeHandle> }) {
     start({ ...inputsRef.current, ...patch });
   }
   // The baseline and its BIOS stay when the BIOS changes: the engine says "blocked" if the baseline no longer fits.
-  const chooseBios = () => choose("bios", (bios) => ({ bios, set: null }));
   const chooseBaseline = () => choose("profile", (baseline) => ({ baseline }));
   const chooseBaselineBios = () => choose("bios", (baselineBios) => ({ baselineBios }));
-  const removeBios = () => clear({ bios: "", set: null, baseline: "", baselineBios: "" });
   const removeBaseline = () => clear({ baseline: "", baselineBios: "" });
   const removeBaselineBios = () => clear({ baselineBios: "" });
   function chooseSet(v: string) {
     start({ ...inputsRef.current, set: Number(v) });
   }
-  function startOver() {
+  function close() {
+    setFormat(false);
     start(NONE);
+    onClose();
   }
   function retry() {
     if (failure) start(toInputs(failure.req));
@@ -251,7 +238,7 @@ export function Analyze({ ref }: { ref?: Ref<AnalyzeHandle> }) {
   // The result shown belongs to these inputs only; anything else cannot be saved.
   const shown = outcome && sameRequest(toRequest(inputs), outcome.req) ? outcome : null;
   const payload = shown?.report.payload ?? null;
-  const canSave = !!shown && shown.report.payload.capabilities.analysis_export && !analysis.busy && !saver.busy;
+  const canSave = !!shown && shown.report.payload.identity.status !== "mismatch" && shown.report.payload.capabilities.analysis_export && !analysis.busy && !saver.busy;
 
   function save(o: Outcome, shareable: boolean) {
     const stem = fileName(o.req.profile).replace(/\.ocb$/i, "") || "profile";
@@ -270,143 +257,97 @@ export function Analyze({ ref }: { ref?: Ref<AnalyzeHandle> }) {
   const items = useMemo(() => (payload ? fieldItems(payload) : []), [payload]);
   const lookup = useMemo(() => (payload ? lookupOf(payload) : EMPTY_LOOKUP), [payload]);
 
-  if (!inputs.profile && format && inputs.bios) {
-    return <ProfileFormat bios={inputs.bios} onChooseBios={() => void chooseBios()} onClose={() => setFormat(false)} />;
-  }
+  // Files are chosen in the picker; without a profile there is nothing to show.
+  if (!inputs.profile) return null;
 
-  if (!inputs.profile) {
-    return (
-      <div className="fill scroller">
-        <div className={s.start}>
-          <div className={s.intro}>
-            <h1>Analyze a profile experimentally</h1>
-            <p className="quiet">
-              Reads the profile's bytes and, with the BIOS image that saved it, tries to name each setting. Nothing is changed, and this
-              screen cannot write a profile. Results are interpretations, not facts about what the BIOS will do.
-            </p>
-          </div>
-          <div className={s.slots}>
-            <button className={s.slot} onClick={() => void chooseProfile()}>
-              <span className={s.kind}>
-                <Icon name="file" /> OC profile
-              </span>
-              <span className={s.cta}>Choose OC profile</span>
-              <span className={`${s.meta} quiet`}>Required. Any .ocb file, including one the checked workflow cannot open.</span>
-            </button>
-            <button className={cx(s.slot, !!inputs.bios && s.filled)} onClick={() => void chooseBios()}>
-              <span className={s.kind}>
-                <Icon name="chip" /> BIOS image
-              </span>
-              {inputs.bios ? (
-                <>
-                  <span className="mono">{fileName(inputs.bios)}</span>
-                  <span className={`${s.meta} quiet`}>Choose the profile to analyze with it, or show its profile format below.</span>
-                </>
-              ) : (
-                <>
-                  <span className={s.cta}>Add BIOS image</span>
-                  <span className={`${s.meta} quiet`}>Optional. Without it, only the file's structure is shown.</span>
-                </>
-              )}
-            </button>
-            {inputs.bios && (
-              <button className={cx(s.slot, !!inputs.baseline && s.filled)} onClick={() => void chooseBaseline()}>
-                <span className={s.kind}>
-                  <Icon name="file" /> Baseline profile (optional)
-                </span>
-                {inputs.baseline ? (
-                  <span className="mono">{fileName(inputs.baseline)}</span>
-                ) : (
-                  <span className={s.cta}>Add baseline profile</span>
-                )}
-                <span className={`${s.meta} quiet`}>{BASELINE_HINT}</span>
-              </button>
-            )}
-          </div>
-          {inputs.baseline && (
-            <div className={s.alt}>
-              <OptionalFile
-                inline
-                label="Baseline BIOS (optional)"
-                hint={BASELINE_BIOS_HINT}
-                path={inputs.baselineBios}
-                name={fileName(inputs.baselineBios)}
-                addText="Add baseline BIOS"
-                changeText="Change baseline BIOS"
-                removeText="Remove baseline BIOS"
-                onChoose={chooseBaselineBios}
-                onRemove={removeBaselineBios}
-              >
-                <button className="btn ghost" onClick={removeBaseline}>Remove baseline</button>
-              </OptionalFile>
-            </div>
-          )}
-          {inputs.bios && (
-            <div className={s.alt}>
-              <p className="quiet">No profile from this BIOS at hand? You can still see what it writes into one.</p>
-              <button className="btn" onClick={() => setFormat(true)}>
-                Show profile format
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    );
+  if (format && inputs.bios) {
+    return <ProfileFormat bios={inputs.bios} closeText="Back to results" onClose={() => setFormat(false)} />;
   }
 
   const bios = payload?.inputs.bios ?? null;
   const needsSet = knownSets.length > 1 && bios !== null && bios.set === null;
+  // The gate only applies when a BIOS was supplied; the engine may report it or refuse the request.
+  const identity = inputs.bios ? (payload?.identity ?? null) : null;
+  const unconfirmed = identity !== null && (identity.status === "unknown" || identity.status === "conflicting");
+  const mismatch =
+    identity?.status === "mismatch"
+      ? identity.reason
+      : inputs.bios && failure && !analysis.busy && failure.title === MISMATCH_TITLE
+        ? failure.message.replace(/^BIOS\/profile identity mismatch: /, "")
+        : null;
   const emptyReason = !bios
-    ? "Add the BIOS image that saved this profile to see its settings."
+    ? "Choose the BIOS image that saved this profile to see its settings."
     : needsSet
       ? "Choose a firmware set to see its settings."
-      : "No setting could be interpreted. The reasons above say why.";
+      : unconfirmed
+        ? "Settings are read only once this BIOS is confirmed as the one that saved the profile."
+        : "No setting could be interpreted. The reasons above say why.";
+
+  const filesStrip = (
+    <div className={`strip ${s.inputs}`} role="group" aria-label="Files read">
+      <span className="quiet">Profile</span>
+      <span className={s.name} title={inputs.profile}>{fileName(inputs.profile)}</span>
+      {inputs.bios && (
+        <>
+          <span className={s.sep} aria-hidden="true" />
+          <span className="quiet">BIOS</span>
+          <span className={`${s.name} mono`} title={inputs.bios}>{bios?.bios_id ?? fileName(inputs.bios)}</span>
+        </>
+      )}
+      {mismatch === null && knownSets.length > 1 && (
+        <label className={s.setpick}>
+          Firmware set
+          <select value={inputs.set ?? ""} onChange={(e) => chooseSet(e.target.value)}>
+            {inputs.set === null && (
+              <option value="" disabled>
+                Choose a set
+              </option>
+            )}
+            {knownSets.map((label, i) => (
+              <option key={i} value={i}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <span className="spacer" />
+      {inputs.bios && mismatch === null && (
+        <button className="btn ghost" onClick={() => setFormat(true)} title="What this BIOS writes into an OC profile, read from the image alone">
+          Profile format
+        </button>
+      )}
+      <button className="btn ghost" onClick={close}>{fromProfile ? "Back to profile" : "Change files"}</button>
+      <button
+        className="btn primary"
+        disabled={!canSave}
+        title={canSave ? "Save this analysis as a JSON report" : "Available once the analysis of these exact files is shown"}
+        onClick={() => shown && save(shown, false)}
+      >
+        Save analysis
+      </button>
+    </div>
+  );
+
+  if (mismatch !== null) {
+    return (
+      <>
+        {filesStrip}
+        <div className={`problem ${s.inset}`} role="alert">
+          <Status tone="blocked" text="Profile and BIOS do not match" />
+          <p>{mismatch}</p>
+          <p className="quiet">Settings stay closed until the profile is paired with the BIOS image that saved it.</p>
+          <button className="btn" onClick={close}>
+            Choose matching BIOS
+          </button>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
-      <div className={`strip ${s.inputs}`} role="group" aria-label="Files analyzed">
-        <span className="quiet">Profile</span>
-        <span className={s.name} title={inputs.profile}>{fileName(inputs.profile)}</span>
-        <button className="btn ghost" onClick={() => void chooseProfile()}>Change profile</button>
-        <span className={s.sep} aria-hidden="true" />
-        {inputs.bios ? (
-          <>
-            <span className="quiet">BIOS</span>
-            <span className={`${s.name} mono`} title={inputs.bios}>{bios?.bios_id ?? fileName(inputs.bios)}</span>
-            <button className="btn ghost" onClick={() => void chooseBios()}>Change BIOS</button>
-            <button className="btn ghost" onClick={removeBios}>Remove BIOS</button>
-          </>
-        ) : (
-          <button className="btn ghost" onClick={() => void chooseBios()}>Add BIOS image</button>
-        )}
-        {knownSets.length > 1 && (
-          <label className={s.setpick}>
-            Firmware set
-            <select value={inputs.set ?? ""} onChange={(e) => chooseSet(e.target.value)}>
-              {inputs.set === null && (
-                <option value="" disabled>
-                  Choose a set
-                </option>
-              )}
-              {knownSets.map((label, i) => (
-                <option key={i} value={i}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <span className="spacer" />
-        <button className="btn ghost" onClick={startOver}>Start over</button>
-        <button
-          className="btn primary"
-          disabled={!canSave}
-          title={canSave ? "Save this analysis as a JSON report" : "Available once the analysis of these exact files is shown"}
-          onClick={() => shown && save(shown, false)}
-        >
-          Save analysis
-        </button>
-      </div>
+      {filesStrip}
 
       <div className={`strip ${s.inputs}`} role="group" aria-label="Optional inputs and sharing">
         {inputs.bios ? (
@@ -456,7 +397,11 @@ export function Analyze({ ref }: { ref?: Ref<AnalyzeHandle> }) {
       <Note
         className={s.banner}
         lead={<Icon name="alert" size={15} />}
-        text="Experimental, read-only interpretation. Some record mappings are inferred. Nothing here can change a profile or a BIOS image."
+        text={
+          fromProfile
+            ? "Every setting, read from the BIOS's own definitions and shown as the BIOS labels them. Mappings marked inferred are not verified. Nothing here can change a profile or a BIOS image."
+            : "Not verified on this board: settings are read from the BIOS's own definitions, shown as the BIOS labels them. Nothing here can change a profile or a BIOS image."
+        }
       />
 
       {payload && (
@@ -466,6 +411,10 @@ export function Analyze({ ref }: { ref?: Ref<AnalyzeHandle> }) {
               lead={<Status text="Baseline profile not used" />}
               text={`${payload.inputs.baseline.reason} Settings are compared with the BIOS image's defaults only.`}
             />
+          )}
+
+          {unconfirmed && identity && (
+            <Note lead={<Status tone="attention" text="Could not confirm that this BIOS saved the profile" />} text={identity.reason} />
           )}
 
           {payload.integrity.status === "unknown" && payload.fields.length > 0 && (

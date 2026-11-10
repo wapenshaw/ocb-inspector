@@ -69,7 +69,7 @@ export function analysisFixture(opts: FixtureOptions = {}): Report<ExperimentalI
       mapping: interpreted ? "confirmed" : "unmapped",
       candidate_stores: interpreted ? [setup] : [],
       variable: null,
-      reason: interpreted ? "adapter_7d91_binding/1: the validated Setup binding" : noSetReason,
+      reason: interpreted ? "setup_size_binding/1: Setup is the only record of its size and the BIOS's variable list names it" : noSetReason,
       evidence: interpreted ? ["ev:map:r0"] : [],
       preview_hex: "0100010101010100000101000001000101", preview_truncated: true,
     },
@@ -106,7 +106,7 @@ export function analysisFixture(opts: FixtureOptions = {}): Report<ExperimentalI
           key: setup, name: "Setup", guid: SETUP_GUID, kind: "buffer", size: 5081, set: set ?? 0,
           declared_by: [{ formset_guid: SETUP_GUID, formset_title: "Setup", module: "Setup", module_sha256: "bf408f35".repeat(8), local_id: 61460 }],
           support: "supported", candidate_records: ["r0"], mapping: "confirmed", mapped_record: "r0",
-          reason: "adapter_7d91_binding/1: the validated Setup binding", evidence: ["ev:map:r0"], field_count: 0,
+          reason: "setup_size_binding/1: Setup is the only record of its size and the BIOS's variable list names it", evidence: ["ev:map:r0"], field_count: 0,
         },
         {
           key: pch, name: "PchSetup", guid: PCH_GUID, kind: "buffer", size: 2063, set: set ?? 0,
@@ -221,7 +221,7 @@ export function analysisFixture(opts: FixtureOptions = {}): Report<ExperimentalI
     {
       id: "ev:container:known_layout", kind: "container", basis: "file_structure", summary: "known_layout fits the file",
       observations: ["magic: Pass ($MOS$ at 0x00)", "record_chain: Pass (4 records end at 0x1c60)"],
-      contradictions: [], limitations: ["Layout established on MS-7D91 profiles; elsewhere a candidate only"],
+      contradictions: [], limitations: ["Layout established on the profiles examined so far; elsewhere a candidate only"],
     },
     {
       id: "ev:identity", kind: "identity", basis: "file_structure", summary: hasBios ? "profile and BIOS identifiers agree" : "no BIOS image to compare with",
@@ -233,7 +233,7 @@ export function analysisFixture(opts: FixtureOptions = {}): Report<ExperimentalI
       observations: [], contradictions: [], limitations: ["Integrity is not established: values are not confirmed as stored by the BIOS"],
     },
     {
-      id: "ev:map:r0", kind: "mapping", basis: "reviewed_binding", summary: "adapter_7d91_binding/1: the validated Setup binding",
+      id: "ev:map:r0", kind: "mapping", basis: "reviewed_binding", summary: "setup_size_binding/1: Setup is the only record of its size and the BIOS's variable list names it",
       observations: ["record r0 is 5081 bytes, the size of the Setup store"], contradictions: [],
       limitations: ["Confirmed only for the reviewed adapter boards"],
     },
@@ -260,7 +260,7 @@ export function analysisFixture(opts: FixtureOptions = {}): Report<ExperimentalI
   const candidates: ContainerCandidateInfo[] = [
     {
       id: "known_layout", rule: "known_layout/1",
-      assumptions: ["Layout established on MS-7D91 profiles; elsewhere a candidate only", "12-byte identifier at 0x05"],
+      assumptions: ["Layout established on the profiles examined so far; elsewhere a candidate only", "12-byte identifier at 0x05"],
       header_id: PROFILE_BIOS_ID, header_id_span: SECTION(5, 17), checksum_at: 17, count_at: 21, records_at: 25,
       record_count: records.length, records_span: SECTION(25, 7264), chain_error: null, trailers: [],
       checks: [
@@ -326,7 +326,7 @@ export function analysisFixture(opts: FixtureOptions = {}): Report<ExperimentalI
   const payload: ExperimentalInspectPayload = {
     analysis: {
       analyzer: "ocb-experimental-inspect", version: "0.1.0", mode: "experimental_read_only",
-      rules: ["known_layout/1", "unique_size_pair/1", "adapter_7d91_binding/1"], completion: "complete",
+      rules: ["known_layout/1", "unique_size_pair/1", "setup_size_binding/1"], completion: "complete",
     },
     inputs: {
       profile_sha256: PROFILE_SHA,

@@ -1071,6 +1071,7 @@ fn experimental_mapping_agrees_with_the_validated_binding() {
             let bios = BiosRef {
                 image: &a.image,
                 profiles_supported: true,
+                schema: None,
             };
             let r = analyze_profile(&bytes, Some(bios), &AnalyzeOptions::default())
                 .expect("analysis")
@@ -1277,6 +1278,7 @@ fn experimental_shareable_report_and_baseline_on_real_profiles() {
     let bios = BiosRef {
         image: &a.image,
         profiles_supported: true,
+        schema: None,
     };
     let read = |n: &str| std::fs::read(root().join(format!("profiles/{n}"))).expect("profile");
     let (main, base) = (read("Base_-100_+2P.ocb"), read("Base-100mv-NoOC.ocb"));
@@ -1328,6 +1330,7 @@ fn experimental_cross_version_baseline_on_real_profiles() {
         BiosRef {
             image: &a.image,
             profiles_supported: true,
+            schema: None,
         }
     }
     use ocb_core::engine::experimental::{
@@ -1402,6 +1405,7 @@ fn identity_messages_name_the_bios_to_open() {
     let bios = BiosRef {
         image: &a.image,
         profiles_supported: true,
+        schema: None,
     };
     let r = analyze_profile(&bytes, Some(bios), &AnalyzeOptions::default()).expect("analysis");
     assert_eq!(r.payload.identity.status, "mismatch");
@@ -1457,4 +1461,148 @@ fn profile_evidence_in_reports() {
         assert_eq!(e, None);
         assert!(json.get("profile_evidence").is_none());
     }
+}
+
+#[test]
+fn experimental_reviewed_readings_preserve_generic_values() {
+    use ocb_core::engine::experimental::{AnalyzeOptions, BiosRef, analyze_profile};
+    if !have_fixtures() {
+        return;
+    }
+    let a = io::load_analysis(&root().join("bios/E7D91IMS.HJ0")).unwrap();
+    for (profile, id, expected) in [
+        (
+            "OC-Just-Minus-100.ocb",
+            "cpu.core.voltage_offset",
+            int(-100, "mV"),
+        ),
+        ("Base_-100_+2P.ocb", "cpu.power.pl1", int(235, "W")),
+    ] {
+        let bytes = std::fs::read(root().join("profiles").join(profile)).unwrap();
+        let enriched = analyze_profile(
+            &bytes,
+            Some(BiosRef::new(&a.image, a.schema.as_ref().ok())),
+            &AnalyzeOptions::default(),
+        )
+        .unwrap()
+        .payload;
+        let generic = analyze_profile(
+            &bytes,
+            Some(BiosRef::new::<firmware::BiosSchema>(&a.image, None)),
+            &AnalyzeOptions::default(),
+        )
+        .unwrap()
+        .payload;
+        assert!(
+            enriched
+                .fields
+                .iter()
+                .any(|f| f.reviewed.as_ref().is_some_and(|r| r.setting_id == id
+                    && r.value == expected
+                    && r.board_evidence == ocb_core::contracts::ProfileEvidence::Examined)),
+            "missing {id}"
+        );
+        assert_eq!(enriched.fields.len(), generic.fields.len());
+        for (a, b) in enriched.fields.iter().zip(&generic.fields) {
+            assert_eq!(a.raw, b.raw);
+            assert_eq!(a.differs_from_default, b.differs_from_default);
+        }
+    }
+}
+
+#[test]
+fn compatible_board_recipe_application_preserves_raw_and_incompatible_has_no_readings() {
+    use ocb_core::engine::experimental::{AnalyzeOptions, BiosRef, analyze_profile};
+    for (board, expected) in [("E7E02IMS", Some(int(50, "mV"))), ("E7C77IMS", None)] {
+        let dir = root().join("new-bios-profiles").join(board);
+        let bios_path = dir.join(format!("{board}.1C0"));
+        if !bios_path.exists() {
+            continue;
+        }
+        let a = io::load_analysis(&bios_path).unwrap();
+        let bytes = std::fs::read(dir.join(format!("{board}.1C0.ocb"))).unwrap();
+        let p = analyze_profile(
+            &bytes,
+            Some(BiosRef::new(&a.image, a.schema.as_ref().ok())),
+            &AnalyzeOptions::default(),
+        )
+        .unwrap()
+        .payload;
+        let generic = analyze_profile(
+            &bytes,
+            Some(BiosRef::new::<firmware::BiosSchema>(&a.image, None)),
+            &AnalyzeOptions::default(),
+        )
+        .unwrap()
+        .payload;
+        assert_eq!(p.fields.len(), generic.fields.len());
+        for (enriched, generic) in p.fields.iter().zip(&generic.fields) {
+            assert_eq!(enriched.raw, generic.raw);
+        }
+        let readings: Vec<_> = p
+            .fields
+            .iter()
+            .filter_map(|f| f.reviewed.as_ref())
+            .collect();
+        if let Some(v) = expected {
+            assert!(
+                readings
+                    .iter()
+                    .any(|r| r.setting_id == "cpu.core.voltage_offset"
+                        && r.value == v
+                        && r.board_evidence == ocb_core::contracts::ProfileEvidence::Untested)
+            );
+        } else {
+            assert!(readings.is_empty());
+        }
+    }
+}
+
+#[test]
+fn reviewed_values_survive_baseline_and_shareable_reports() {
+    use ocb_core::engine::experimental::{
+        AnalyzeOptions, BaselineSource, BiosRef, analyze_with_baseline_on, make_shareable,
+    };
+    if !have_fixtures() {
+        return;
+    }
+    let a = io::load_analysis(&root().join("bios/E7D91IMS.HJ0")).unwrap();
+    let main = std::fs::read(root().join("profiles/OC-Just-Minus-100.ocb")).unwrap();
+    let base = std::fs::read(root().join("profiles/Base_-100_+2P.ocb")).unwrap();
+    let mut p = analyze_with_baseline_on(
+        &main,
+        Some(BiosRef::new(&a.image, a.schema.as_ref().ok())),
+        Some(BaselineSource::same_image(&base)),
+        &AnalyzeOptions::default(),
+    )
+    .unwrap()
+    .payload;
+    let check = |p: &ExperimentalInspectPayload| {
+        assert!(p.fields.iter().any(|f| {
+            f.reviewed.as_ref().is_some_and(|r| {
+                r.setting_id == "cpu.core.voltage_offset"
+                    && r.value == int(-100, "mV")
+                    && r.baseline_value == Some(int(-105, "mV"))
+            })
+        }))
+    };
+    check(&p);
+    make_shareable(&mut p);
+    check(&p);
+    let text = serde_json::to_string(&p).unwrap();
+    let _: ExperimentalInspectPayload = serde_json::from_str(&text).unwrap();
+    let mut legacy: serde_json::Value = serde_json::from_str(&text).unwrap();
+    for field in legacy["fields"].as_array_mut().unwrap() {
+        if let Some(reading) = field.get_mut("reviewed").and_then(|r| r.as_object_mut()) {
+            reading.remove("board_evidence");
+        }
+    }
+    let legacy: ExperimentalInspectPayload = serde_json::from_value(legacy).unwrap();
+    assert!(
+        legacy
+            .fields
+            .iter()
+            .filter_map(|f| f.reviewed.as_ref())
+            .all(|r| { r.board_evidence == ocb_core::contracts::ProfileEvidence::Untested })
+    );
 }

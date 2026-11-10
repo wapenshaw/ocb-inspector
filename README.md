@@ -23,14 +23,16 @@ changed, you have to find it all again by hand, because MSI gives you no way to 
 your PC and see what's in it.
 
 OCB Inspector is our attempt to change that. Open the old profile together with the BIOS file it
-was saved on, and you see every setting in it, laid out the way the BIOS menus lay it out, with
-the stock value beside each one. Anything you changed stands out. Put the old profile next to a
-new one saved after the update, and you see exactly what still differs.
+was saved on, and you see the settings it can map, laid out the way the BIOS menus lay them out,
+with a stock value beside each one where the firmware supplies it. Mapped values that differ
+from those defaults are highlighted. Compare supported profiles from before and after an
+update to see which stored settings differ.
 
-It's early days. Profiles can be read from Intel 600 and 700 series boards today, and everything
-was checked against one board, MSI's 7D91 (the MPG Z790 Edge WiFi and MAG Z790 Tomahawk WiFi).
-If you own another board, your profiles are what it takes to support it (see [Help
-wanted](#help-wanted-profiles-from-other-boards)).
+Inspect uses the supplied BIOS's definitions to read recognized profiles and compare saved
+values with available firmware defaults. A few profile/BIOS pairs from Intel 400-, 600- and
+700-series boards have been examined. AMD BIOS images have been browsed, but no AMD profiles
+have been tested.
+See [Help wanted](#help-wanted-profiles-from-other-boards) to contribute another pair.
 
 <p align="center">
   <img src="docs/images/inspect.png" alt="A profile open next to its BIOS: the Overclocking page, with the saved value and stock value of each setting, and the P-Core Turbo Ratio Offset at +2 bins">
@@ -50,22 +52,25 @@ wanted](#help-wanted-profiles-from-other-boards)).
 - **Browse a BIOS.** Open an MSI BIOS image and walk its setup menus as the BIOS shows them,
   with each setting's "Load Optimized Defaults" value. Intel 300–800 series, X299, AM4, AM5 and
   TRX40 images open.
-- **Inspect a profile.** Open an `.ocb` profile with the BIOS that saved it and see every setting
-  it stores (over 3,000 on a Z790 board), what the BIOS menus call it, and whether it differs
-  from the optimized default.
+- **Inspect a profile.** Open an `.ocb` profile with the BIOS that saved it and see the settings
+  it can map (over 3,000 on examined Z790 pairs), what the BIOS menus call them, and whether
+  they differ from available optimized defaults.
 - **Compare two profiles.** Side by side, even across BIOS versions: settings are matched by
   their place in the menus, so a profile saved before a BIOS update lines up with one saved
   after it.
-- **Analyze any profile (experimental).** For a profile the regular reader can't open, from another
-  board, generation or vendor, the experimental analysis shows what the file is made of and, given
-  the BIOS that saved it, reads the settings it can tie to that BIOS's own definitions. Every
-  inferred mapping is labelled as such, unknown values stay unknown, and nothing it shows can be
-  edited or exported. Record names come from the BIOS image itself: its setup browser keeps a
-  list of the variables an OC profile saves, and each record's number is its place in that list.
-  Every one of the 126 MSI images examined has this list. Only MS-7D91 profiles have been checked
-  so far: there all 116 records get a name, the two stores the regular reader uses are confirmed,
-  and 42 more are mapped, about 5,300 settings in all. Profiles from other boards have not been
-  tried, so expect partial or blocked results.
+- **BIOS-derived Inspect (experimental).** Inspect maps profile records through the supplied
+  BIOS's variable list and setup definitions. It labels inferred mappings and reports partial
+  or blocked results. Compatible reviewed recipes can add units, signed values and Auto
+  interpretations; generic fields keep raw values and the BIOS's labels. Those recipes were
+  checked on one Z790 board and are also applied when compatible on other boards;
+  this does not establish that their meanings were checked on those boards. Raw values,
+  mapping evidence and raw comparisons remain available. Compare and experimental writing
+  use the separate reviewed reader; Inspect enrichment does not widen writing support.
+- **Defaults from your firmware.** Saved values are compared with the supplied BIOS's optimized
+  defaults where available. Missing or conflicting defaults remain explicitly unknown; they
+  are never treated as zero or unchanged. Generic numeric values can be raw storage numbers:
+  sign and units may be encoded in separate settings or vendor logic, so a number alone does
+  not establish a voltage, frequency or signed offset.
 - **Compare with your own baseline.** The BIOS image's optimized defaults flag dozens of values
   the firmware fills in by itself (DMI lanes, fan types). To see only what differs from a clean
   setup, load optimized defaults in the BIOS, save a profile, and give it to the analysis as the
@@ -140,9 +145,9 @@ so the folder must be writable. Deleting `config/settings.json` and `config/webv
 ## Read-only by default
 
 Out of the box both programs only read. You can open a BIOS on its own, open a profile with the BIOS
-that saved it and see every setting the BIOS menus show (its saved value, the "Load Optimized
-Defaults" value and whether they differ), and compare two profiles, even from different BIOS
-versions. Nothing is ever written.
+that saved it and see mapped settings (their saved values, available "Load Optimized Defaults"
+values and whether they differ), and compare profiles supported by the reviewed reader, even
+from different BIOS versions. Nothing is ever written.
 
 Editing a profile and porting it to another BIOS version are **experimental**. They stay hidden, and
 the CLI refuses `profile build` and `migrate build`, unless `config/settings.json` contains the
@@ -193,13 +198,41 @@ purpose, so that a build is inspect-only unless someone puts the files there.
   confirmed on hardware: load optimized defaults, save a profile, and check that the app marks
   almost nothing before relying on the highlighting. When the image's default copies disagree, no
   defaults are shown.
-- **Profiles from other boards cannot be opened yet.** Profiles open only for 600/700-series Intel
-  images with the 961-byte CpuSetup layout, the only ones with examined profiles. Every profile
-  records the BIOS ID that saved it in 12 bytes; newer IDs such as `E7E34IMSI.1AF0` are 14
-  characters, so their profiles probably use a different layout. Other Intel generations reuse
-  setting names with different meanings, and AMD stores CPU settings elsewhere. Those BIOS images
-  can be browsed; their profiles need a real saved profile from that board before support can be
-  added.
+- **Coverage depends on the supplied pair.** Inspect can read recognized containers and stores
+  it can map through that BIOS's definitions. Profile evidence currently covers the Intel pairs
+  listed above; the AMD image corpus establishes browsing coverage only. Unknown layouts,
+  ambiguous mappings and mismatched BIOS identities can limit or block interpretation.
+  Read-only analysis does not grant Compare, editing or migration support.
+
+For BIOS images containing several firmware sets, Inspect offers an inline firmware-set selector.
+The CLI accepts `--set <number>` (1-based). Choosing a set is a hypothesis about where the
+profile came from, not proof that the set saved it.
+
+## CLI exit codes
+
+Strict commands such as `profile inspect` distinguish malformed input or a BIOS/profile
+identity mismatch (exit **4**) from an unsupported or ambiguous layout (exit **5**).
+In particular, a valid matching-identity profile with no record of the required store size
+returns `unsupported` / 5. This corrects the older `identity_mismatch` / 4 classification:
+an unbindable store does not establish that the BIOS identity is wrong.
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Requested operation completed |
+| 1 | Internal failure |
+| 2 | Usage or request schema error |
+| 3 | I/O, output collision or resource limit |
+| 4 | Malformed binary or BIOS/profile identity mismatch |
+| 5 | Unsupported or ambiguous layout, codec, condition or integrity rules |
+| 6 | Setting validation or patch precondition failure |
+| 7 | Unresolved migration conflicts |
+| 8 | Generated-output verification failure |
+| 9 | Input hash, schema or adapter binding changed |
+
+`profile analyze` returns 0 when analysis completes, including reports with unrecognized,
+mismatched or blocked inputs; consult the report's status and diagnostics. I/O, resource limits
+and invalid arguments still use the error codes above. JSON errors from strict commands contain
+`kind: "ocb.error"`, `code`, `exit_code` and `message`.
 
 ## Building from source
 
@@ -218,10 +251,10 @@ opening a pull request.
 
 ## Help wanted: profiles from other boards
 
-Profiles from boards other than Intel 600/700 series can't be opened by the regular reader yet,
-because their layout has never been seen. The experimental analysis (`ocbi profile analyze
---profile <file> --bios <image>`, or "Analyze profile experimentally" in the app) still shows what
-it can, and its JSON report says exactly which parts it inferred. If you have such a profile,
+Inspect uses the same experimental BIOS-derived reading for all recognized, mappable pairs
+(`ocbi profile analyze --profile <file> --bios <image>`, or choose the pair in Inspect).
+Its JSON report says which parts were inferred and which could not be read. If you have a
+profile from another board or firmware release,
 [share it in a profile report](https://github.com/wapenshaw/ocb-inspector/issues/new?template=profile_report.yml),
 ideally with that analysis saved as a shareable report (`--shareable`, or "Save shareable report"
 in the app), which leaves out the CPU name, the save time and raw record bytes. Two profiles that differ in one setting you changed on purpose are the

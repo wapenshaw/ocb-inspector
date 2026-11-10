@@ -61,7 +61,7 @@ export function profileFormatFixture(opts: { traced?: boolean } = {}): Report<Pr
       },
       list_problem: null,
       limitations: [
-        "Exported profiles have been checked against this layout only on MS-7D91",
+        "Exported profiles have been checked against this layout on one board only",
         ...(traced ? [] : ["This release's profile code was not traced: parts marked expected follow the traced releases, and which positions are saved is unknown"]),
         "Record ids belong to this exact release: another release's list can shift them",
       ],

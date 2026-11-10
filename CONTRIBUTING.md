@@ -7,8 +7,8 @@ guidelines follow from that.
 
 ## Ways to help
 
-- **Share a profile from another board.** Profiles open today only for Intel 600/700-series
-  boards. [Open a profile report](https://github.com/wapenshaw/ocb-inspector/issues/new?template=profile_report.yml)
+- **Share a profile from another board.** Inspect can analyze recognized profiles using the
+  supplied BIOS definitions; coverage and confidence depend on the pair. [Open a profile report](https://github.com/wapenshaw/ocb-inspector/issues/new?template=profile_report.yml)
   with two `.ocb` files that differ in one setting you changed on purpose, plus the board and
   BIOS version. That is how support for a new board starts.
 - **Report what you see.** If a setting's name, value or optimized default looks wrong next to

@@ -4,8 +4,8 @@ import { fileName } from "../lib/format";
 // Design preview only: outside Tauri the bridge serves recorded CLI output from /mock
 // (ui/public/mock, git-ignored) so layouts can be checked without a desktop window.
 const mockQueue: Record<"bios" | "profile", string[]> = {
-  bios: ["E7D91IMS.HI0", "E7D91IMS.HJ0", "E7E49AMSI.1AA7", "E7C02AMS.HG4"],
-  profile: ["BeforeUpgrade.ocb", "Base-100mv-NoOC.ocb"],
+  bios: ["E7D91IMS.HI0", "E7D91IMS.HJ0", "E7E49AMSI.1AA7", "E7C02AMS.HG4", "E7C77IMS.1C0", "E7E02IMS.1C0"],
+  profile: ["BeforeUpgrade.ocb", "Base-100mv-NoOC.ocb", "E7C77IMS.1C0.ocb", "E7E02IMS.1C0.ocb"],
 };
 
 export function mockPick(kind: "bios" | "profile"): string {

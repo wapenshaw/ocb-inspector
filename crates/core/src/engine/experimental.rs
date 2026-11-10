@@ -2,8 +2,9 @@
 //!
 //! Interprets an OCB file that the validated reader does not support, using only the file's own
 //! structure and the BIOS's own variable stores and questions. Everything here is display only:
-//! the result is an immutable report, never a `Session`, patch, plan or output file, and no
-//! function in this module can reach a writer. Inferred mappings stay labelled as inferred.
+//! the result is an immutable report, never a patch, plan or output file, and no
+//! function in this module invokes a writer. Reviewed readings use an internal checked Session.
+//! Inferred mappings stay labelled as inferred.
 
 use crate::bytes::{hex, sha256_hex, uint_at};
 use crate::contracts::*;
@@ -26,11 +27,12 @@ pub const OPERATION: &str = "experimental_inspect";
 /// formsets are the same variable; the same GUID and name with different sizes is a conflict.
 pub const RULE_UEFI_IDENTITY: &str = "uefi_variable_identity/1";
 /// Additive checksum: the i32 at the checksum offset equals minus the sum of every other byte.
-/// Established for the known layout on MS-7D91; elsewhere a trial only.
+/// The traced save code computes it this way; a match is reported as verified on any board.
 pub const RULE_CHECKSUM: &str = "additive_checksum/1";
-/// The validated MS-7D91 binding (`Session::pair`): Setup and CpuSetup each match exactly one
-/// record by size, and Setup is the first record. Confirmed only within that established scope.
-pub const RULE_7D91_BINDING: &str = "adapter_7d91_binding/1";
+/// Setup and CpuSetup each match exactly one record by size, Setup is the first record, and the
+/// BIOS's own variable list names the same variables. Confirmed only when both agree, in the
+/// known layout with a matching checksum.
+pub const RULE_SIZE_BINDING: &str = "setup_size_binding/1";
 /// Generic inference: a record and a buffer store whose sizes match nothing else.
 pub const RULE_UNIQUE_SIZE: &str = "unique_size_pair/1";
 /// Firmware-derived: a record id is the position of its variable in the setup browser's
@@ -43,8 +45,6 @@ pub const RULE_VARIABLE_INDEX: &str = "amitse_variable_index/1";
 pub const RULE_BASELINE: &str = "baseline_compare/1";
 pub const RULE_BASELINE_CROSS: &str = "baseline_compare_cross/1";
 pub const RULE_BASELINE_FILLED: &str = "baseline_firmware_filled/1";
-/// Board whose profiles established the known layout, checksum and binding.
-const ESTABLISHED_BOARD: &str = "7D91";
 const PREVIEW_BYTES: usize = 64;
 
 #[derive(Debug, Clone, Default)]
@@ -59,17 +59,19 @@ pub struct AnalyzeOptions {
 pub struct BiosRef<'a> {
     pub image: &'a BiosImage,
     pub profiles_supported: bool,
+    pub schema: Option<&'a crate::firmware::BiosSchema>,
 }
 
 impl<'a> BiosRef<'a> {
     /// An image with the support flag its decode schema (if it has one) reports.
     pub fn new<S: std::borrow::Borrow<crate::firmware::BiosSchema>>(
         image: &'a BiosImage,
-        schema: Option<&S>,
+        schema: Option<&'a S>,
     ) -> Self {
         Self {
             image,
             profiles_supported: schema.is_some_and(|s| s.borrow().platform.profiles_supported),
+            schema: schema.map(|s| s.borrow()),
         }
     }
 }
@@ -173,48 +175,39 @@ fn candidate_identity(c: &ContainerCandidate) -> ProfileId {
     }
 }
 
-fn established(c: &ContainerCandidate, id: &ProfileId) -> bool {
-    c.rule == RULE_KNOWN
-        && c.all_checks_pass()
-        && id.id.as_ref().is_some_and(|p| p.0 == ESTABLISHED_BOARD)
+/// The known layout with every structural check passing, on any board.
+fn established(c: &ContainerCandidate) -> bool {
+    c.rule == RULE_KNOWN && c.all_checks_pass()
 }
 
-fn integrity(
-    bytes: &[u8],
-    c: &ContainerCandidate,
-    established: bool,
-    traced: bool,
-) -> IntegrityFinding {
+/// `strict`: a mismatch is a failure only where the checksum rule has been evidenced.
+fn integrity(bytes: &[u8], c: &ContainerCandidate, strict: bool) -> IntegrityFinding {
     let stored = probe::stored_i32(bytes, c.checksum_at);
     let computed = probe::additive_checksum(bytes, c.checksum_at);
     let same = stored.is_some() && stored == computed;
-    let (status, mut limitations) = if established {
+    let (status, limitations) = if same {
         (
-            if same { "verified" } else { "failed" },
-            vec!["Consistency with the established rule; not proof of BIOS acceptance".to_string()],
+            "verified",
+            vec![
+                "The file's bytes add up to its stored checksum; not proof of BIOS acceptance"
+                    .to_string(),
+            ],
+        )
+    } else if strict {
+        (
+            "failed",
+            vec!["The checksum does not match; the file is damaged or was edited without recomputing it".to_string()],
         )
     } else {
         (
-            if same { "candidate_match" } else { "unknown" },
-            vec![if same {
-                "The known additive relation holds at this offset; weak evidence, not authenticity"
-                    .to_string()
-            } else if traced {
-                "The checksum does not match; this release's traced profile loader rejects such a file".to_string()
-            } else {
-                "The known additive relation does not hold here; this board may use another algorithm, so this is not a sign of corruption".to_string()
-            }],
+            "unknown",
+            vec!["The known additive relation does not hold here; this board may use another algorithm, so this is not a sign of corruption".to_string()],
         )
     };
-    if !established {
-        limitations.push(format!(
-            "The rule is established only for MS-{ESTABLISHED_BOARD} profiles in the known layout"
-        ));
-    }
     IntegrityFinding {
         status: status.into(),
         rule: Some(RULE_CHECKSUM.into()),
-        scope: format!("known layout, MS-{ESTABLISHED_BOARD}"),
+        scope: "additive relation at the layout's checksum offset".into(),
         checksum_at: Some(c.checksum_at),
         stored: stored.map(|v| v.to_string()),
         computed: computed.map(|v| v.to_string()),
@@ -299,7 +292,7 @@ fn index_rule<'a>(
                 "Applied because this image has the same setup-data variable list; the OC-profile save and load code of this release was not traced"
             }
             .into(),
-            "Exported profiles have been checked against this rule only on MS-7D91".into(),
+            "Exported profiles have been checked against this rule on one board only".into(),
         ],
     };
     let list = match variable_list(img, set) {
@@ -371,7 +364,7 @@ fn index_rule<'a>(
             && (e.guid != v.guid || e.name != v.name)
         {
             r.contradictions.push(format!(
-                "the validated binding puts {} at record {} but the variable list names {}",
+                "the size binding puts {} at record {} but the variable list names {}",
                 v.name, records[ri].id, e.name
             ));
         }
@@ -844,6 +837,11 @@ fn annotate_baseline(
     how: &str,
     differs: Option<bool>,
 ) {
+    if let (Some(reviewed), Some(other_reviewed)) = (&mut f.reviewed, &other.reviewed)
+        && reviewed.setting_id == other_reviewed.setting_id
+    {
+        reviewed.baseline_value = Some(other_reviewed.value.clone());
+    }
     f.baseline_match = Some(how.into());
     f.baseline_raw = other.raw.clone();
     f.baseline_label = other.value_label.clone();
@@ -1011,7 +1009,7 @@ fn baseline_gate(
         return Err(format!("baseline identity: {}", b.identity.reason));
     }
     if b.integrity.status == "failed" {
-        return Err("the baseline's established checksum does not match".into());
+        return Err("the baseline's checksum does not match".into());
     }
     if b.fields.is_empty() {
         return Err(format!(
@@ -1098,13 +1096,17 @@ fn analyze_one(
     for (i, c) in probed.candidates.iter().enumerate() {
         rules.insert(format!("{}/{}", c.rule, c.rule_version));
         let id = candidate_identity(c);
-        let est = established(c, &id);
+        let est = established(c);
         let integ = integrity(
             profile,
             c,
-            est,
-            bios.as_ref()
-                .is_some_and(|b| profile_code::traced(&b.image.sha256)),
+            (est && id
+                .id
+                .as_ref()
+                .is_some_and(|p| crate::catalog::ADAPTER_BOARDS.contains(&p.0.as_str())))
+                || bios
+                    .as_ref()
+                    .is_some_and(|b| profile_code::traced(&b.image.sha256)),
         );
         let mut contradictions = Vec::new();
         if !c.complete() {
@@ -1315,7 +1317,7 @@ fn analyze_one(
             interpret = false;
         } else if integrity_top.status == "failed" {
             reasons.push(
-                "The established checksum does not match; only file structure is shown".into(),
+                "The checksum does not match: the file is damaged or was edited; only file structure is shown".into(),
             );
             interpret = false;
         } else if let (Some(b), Some(s), Some((i, ..))) = (&bios, set, &selected)
@@ -1380,11 +1382,11 @@ fn analyze_one(
         })
         .collect();
 
-    // The validated MS-7D91 binding: Setup and CpuSetup each the only record of their size,
-    // Setup first. Only inside the established scope.
+    // Size binding: Setup and CpuSetup each the only record of their size, Setup first. Kept
+    // only when the BIOS's variable list agrees (below).
     let mut bound: Vec<(usize, usize)> = Vec::new();
     if established_scope && interpret {
-        rules.insert(RULE_7D91_BINDING.into());
+        rules.insert(RULE_SIZE_BINDING.into());
         for name in ["Setup", "CpuSetup"] {
             let named: Vec<usize> = vars
                 .iter()
@@ -1416,6 +1418,10 @@ fn analyze_one(
         _ => None,
     };
     let by_index = index.as_ref().is_some_and(IndexRule::applied);
+    // Without the variable list there is no second source: sizes alone stay inferred.
+    if !by_index {
+        bound.clear();
+    }
     if let Some(ix) = &index {
         if !ix.applied() {
             reasons.push(format!(
@@ -1537,13 +1543,13 @@ fn analyze_one(
         })
         .collect();
 
-    // Reviewed rule first: the validated MS-7D91 binding, only inside its established scope.
+    // Two agreeing sources first: the size binding the variable list confirms.
     for &(ri, vi) in &bound {
         rec_map[ri] = (
             "confirmed",
             Some(vi),
             format!(
-                "{RULE_7D91_BINDING}: the validated {} binding",
+                "{RULE_SIZE_BINDING}: {} is the only record of its size and the BIOS's variable list names it",
                 vars[vi].name
             ),
         );
@@ -1862,6 +1868,9 @@ fn analyze_one(
         });
     }
 
+    if interpret && let Some(b) = bios {
+        enrich_reviewed(profile, b, set, &store_infos, &mut fields);
+    }
     let coverage = coverage(profile.len(), &record_infos, &fields);
     if interpret && coverage.fields_decoded > 0 {
         reasons.push(format!(
@@ -1908,6 +1917,122 @@ fn analyze_one(
     let mut r = Report::new(OPERATION, payload, Vec::new());
     r.payload_version = EXPERIMENTAL_PAYLOAD_VERSION.into();
     Ok(r)
+}
+
+/// Optional recipe readings are only attached after the validated pairing and exact field checks.
+fn enrich_reviewed(
+    profile: &[u8],
+    bios: BiosRef<'_>,
+    set: Option<usize>,
+    stores: &[StoreInfo],
+    fields: &mut [ExperimentalField],
+) {
+    let Some(schema) = bios.schema else { return };
+    if schema.sha256 != bios.image.sha256 || bios.image.sets.len() > 1 || set != Some(0) {
+        return;
+    }
+    let Ok(session) = super::Session::pair(std::sync::Arc::new(schema.clone()), profile.to_vec())
+    else {
+        return;
+    };
+    for setting in super::inspect::decoded_settings(&session) {
+        let Some(value) = setting.value else { continue };
+        let Some(recipe) = crate::catalog::recipe(&setting.setting_id) else {
+            continue;
+        };
+        let super::RecipeState::Decoded(decoded) = super::decode_recipe(&session, recipe) else {
+            continue;
+        };
+        let components: Vec<_> = setting
+            .fields
+            .iter()
+            .map(|f| ReviewedComponent {
+                store: f.store.clone(),
+                store_offset: f.store_offset,
+                width_bits: f.width_bits,
+                span: Range::new(f.file_offset, f.file_offset + usize::from(f.width_bits / 8)),
+            })
+            .collect();
+        if components.len() != decoded.fields.len() {
+            continue;
+        }
+        let matches: Vec<Vec<usize>> = components
+            .iter()
+            .zip(&decoded.fields)
+            .enumerate()
+            .map(|(index, (component, resolved))| {
+                let Some(store) = schema.store(&component.store) else {
+                    return Vec::new();
+                };
+                fields
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, field)| {
+                        stores.iter().any(|s| {
+                            s.key == field.store
+                                && s.name == store.name
+                                && s.guid.eq_ignore_ascii_case(&store.guid)
+                        }) && resolved.questions.iter().any(|q| {
+                            field.key.ends_with(&format!(":{}", q.ifr_offset))
+                                && field.label == q.prompt.trim()
+                        }) && field.store_offset == component.store_offset
+                            && field.width_bits == component.width_bits
+                            && field.span == Some(component.span)
+                            && field
+                                .raw
+                                .as_ref()
+                                .is_some_and(|r| r.dec == setting.fields[index].raw.to_string())
+                    })
+                    .map(|(i, _)| i)
+                    .collect()
+            })
+            .collect();
+        if matches.iter().any(Vec::is_empty) {
+            continue;
+        }
+        let defaults_agree = components.iter().zip(&matches).all(|(component, indices)| {
+            let expected = schema.default_raw(
+                &component.store,
+                component.store_offset,
+                usize::from(component.width_bits / 8),
+            );
+            expected.is_some_and(|raw| {
+                indices.iter().all(|&i| {
+                    fields[i]
+                        .default_raw
+                        .as_ref()
+                        .is_some_and(|d| d.dec == raw.to_string())
+                })
+            })
+        });
+        let default_value = defaults_agree
+            .then_some(setting.default_value.clone())
+            .flatten();
+        let differs_from_default = default_value.as_ref().map(|d| value != *d);
+        for indices in &matches {
+            for &i in indices {
+                if fields[i].reviewed.is_none() {
+                    fields[i].reviewed = Some(ReviewedInterpretation {
+                        setting_id: setting.setting_id.clone(),
+                        label: setting.label.clone(),
+                        value: value.clone(),
+                        default_value: default_value.clone(),
+                        differs_from_default,
+                        baseline_value: None,
+                        evidence: setting.evidence.clone(),
+                        board_evidence: if crate::catalog::ADAPTER_BOARDS
+                            .contains(&schema.identity.board.as_str())
+                        {
+                            ProfileEvidence::Examined
+                        } else {
+                            ProfileEvidence::Untested
+                        },
+                        components: components.clone(),
+                    });
+                }
+            }
+        }
+    }
 }
 
 fn bios_input(b: &BiosRef<'_>, set: Option<usize>) -> BiosInput {
@@ -1971,6 +2096,7 @@ fn decode(
         differs_from_baseline: None,
         baseline_match: None,
         baseline_off_default: None,
+        reviewed: None,
         hidden: q.never_shown(),
         conditional: !q.conditions.is_empty(),
         callback: q.is_callback(),

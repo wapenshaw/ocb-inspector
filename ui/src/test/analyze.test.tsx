@@ -1,3 +1,4 @@
+import { createRef } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ExperimentalInspectPayload, Report } from "../api/types";
@@ -15,6 +16,7 @@ vi.mock("../api", async (original) => ({
   api: { analyzeProfile, saveAnalysis, openPage },
 }));
 const { Analyze } = await import("../components/Analyze");
+import type { AnalyzeHandle } from "../components/Analyze";
 
 type Result = Report<ExperimentalInspectPayload>;
 
@@ -35,6 +37,25 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+const onClose = vi.fn();
+let handle = createRef<AnalyzeHandle>();
+
+/** Files are chosen in Inspect's picker; the view receives them through its handle. */
+function renderAnalyze() {
+  handle = createRef<AnalyzeHandle>();
+  return render(<Analyze ref={handle} onClose={onClose} />);
+}
+async function openFiles(bios: string, profile: string) {
+  await act(async () => handle.current?.open(bios, profile));
+}
+/** A new result opens on Settings; the profile id and the reasons are in the Summary. */
+async function summary() {
+  await userEvent.click(await screen.findByRole("radio", { name: "Summary" }));
+}
+async function seen(id: string) {
+  await summary();
+  return screen.findByText(id);
+}
 /** Pick a file through the button with this name; the dialog answers with `file`. */
 async function choose(name: RegExp, file: string) {
   pickFile.mockResolvedValueOnce(file);
@@ -43,8 +64,6 @@ async function choose(name: RegExp, file: string) {
 }
 
 const saveButton = () => screen.getByRole("button", { name: "Save analysis" });
-const PROFILE = /Choose OC profile|Change profile/;
-const BIOS = /Add BIOS image|Change BIOS/;
 
 beforeEach(() => {
   pickFile.mockReset();
@@ -52,6 +71,7 @@ beforeEach(() => {
   analyzeProfile.mockReset();
   saveAnalysis.mockReset();
   openPage.mockReset();
+  onClose.mockReset();
 });
 
 describe("Analyze: stale answers", () => {
@@ -60,9 +80,9 @@ describe("Analyze: stale answers", () => {
     const current = deferred<Result>();
     analyzeProfile.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
 
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
-    await choose(PROFILE, "b.ocb");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
+    await openFiles("", "b.ocb");
     expect(analyzeProfile).toHaveBeenLastCalledWith({ profile: "b.ocb", bios: null, set: null });
     expect(saveButton()).toBeDisabled();
 
@@ -73,7 +93,7 @@ describe("Analyze: stale answers", () => {
     expect(screen.getByText("Analyzing…")).toBeInTheDocument();
 
     await act(async () => current.resolve(result("NEW-ID")));
-    expect(await screen.findByText("NEW-ID")).toBeInTheDocument();
+    expect(await seen("NEW-ID")).toBeInTheDocument();
     expect(saveButton()).toBeEnabled();
   });
 
@@ -82,9 +102,9 @@ describe("Analyze: stale answers", () => {
     const second = deferred<Result>();
     analyzeProfile.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
 
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
-    await choose(BIOS, "E7D91IMS.HI0");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
+    await openFiles("E7D91IMS.HI0", "a.ocb");
     expect(analyzeProfile).toHaveBeenLastCalledWith({ profile: "a.ocb", bios: "E7D91IMS.HI0", set: null });
 
     await act(async () => first.reject({ code: "io", exit_code: 3, message: "stale failure" }));
@@ -92,18 +112,18 @@ describe("Analyze: stale answers", () => {
     expect(screen.queryByText("stale failure")).not.toBeInTheDocument();
 
     await act(async () => second.resolve(result("BIOS-ID", { bios: true })));
-    expect(await screen.findByText("BIOS-ID")).toBeInTheDocument();
+    expect(await seen("BIOS-ID")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("disables Save while the replacement is pending, and saves only the shown result", async () => {
     analyzeProfile.mockResolvedValueOnce(result("FIRST-ID")).mockReturnValueOnce(new Promise(() => {}));
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
-    expect(await screen.findByText("FIRST-ID")).toBeInTheDocument();
+    renderAnalyze();
+    await openFiles("", "a.ocb");
+    expect(await seen("FIRST-ID")).toBeInTheDocument();
     expect(saveButton()).toBeEnabled();
 
-    await choose(PROFILE, "c.ocb");
+    await openFiles("", "c.ocb");
     expect(saveButton()).toBeDisabled();
     expect(screen.queryByText("FIRST-ID")).not.toBeInTheDocument();
   });
@@ -114,9 +134,9 @@ describe("Analyze: stale answers", () => {
     pickSave.mockResolvedValueOnce("C:/out/a.analysis.json");
     saveAnalysis.mockResolvedValueOnce("C:/out/a.analysis.json");
 
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
-    await screen.findByText("SAVE-ID");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
+    await seen("SAVE-ID");
     await userEvent.click(saveButton());
 
     expect(pickSave).toHaveBeenCalledWith("a.analysis.json", "json", "Save analysis");
@@ -134,17 +154,17 @@ describe("Analyze: retry", () => {
       .mockRejectedValueOnce({ code: "io", exit_code: 3, message: "cannot read the BIOS image" })
       .mockResolvedValueOnce(result("RETRIED-ID", { bios: true }));
 
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
-    await screen.findByText("PROFILE-ONLY");
-    await choose(BIOS, "bios.HI0");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
+    await seen("PROFILE-ONLY");
+    await openFiles("bios.HI0", "a.ocb");
 
     const alert = await screen.findByRole("alert");
     expect(within(alert).getByText("Could not read a file")).toBeInTheDocument();
     expect(within(alert).getByText("cannot read the BIOS image")).toBeInTheDocument();
 
     await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
-    await screen.findByText("RETRIED-ID");
+    await seen("RETRIED-ID");
     expect(analyzeProfile).toHaveBeenCalledTimes(3);
     expect(analyzeProfile.mock.calls[2]).toEqual(analyzeProfile.mock.calls[1]);
     expect(analyzeProfile.mock.calls[2]).toEqual([{ profile: "a.ocb", bios: "bios.HI0", set: null }]);
@@ -154,17 +174,17 @@ describe("Analyze: retry", () => {
 describe("Analyze: rendering", () => {
   it("shows inferred, ambiguous and unknown states with the banner and no verified badge or edit control", async () => {
     analyzeProfile.mockResolvedValueOnce(result("E7D91IMS.HI0", { set: 0 }));
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
     await screen.findByRole("radio", { name: "Settings" });
 
     expect(
-      screen.getByText("Experimental, read-only interpretation. Some record mappings are inferred. Nothing here can change a profile or a BIOS image."),
+      screen.getByText("Not verified on this board: settings are read from the BIOS's own definitions, shown as the BIOS labels them. Nothing here can change a profile or a BIOS image."),
     ).toBeInTheDocument();
     expect(screen.getByText("Integrity not established")).toBeInTheDocument();
     expect(screen.queryByText(/Match verified/)).not.toBeInTheDocument();
     expect(screen.queryByText(/checksum valid/i)).not.toBeInTheDocument();
-    expect(document.body.textContent ?? "").not.toMatch(/verified/i);
+    expect(document.body.textContent ?? "").not.toMatch(/checksum valid|heat-/i);
     expect(screen.queryByRole("button", { name: /^(Apply|Build|Export|Port|Edit)/ })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("radio", { name: "Settings" }));
@@ -184,19 +204,21 @@ describe("Analyze: rendering", () => {
     analyzeProfile
       .mockResolvedValueOnce(result("E7D91IMS.HI0", { bios: true, set: null }))
       .mockResolvedValueOnce(result("E7D91IMS.HI0", { bios: true, set: null }));
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
-    await choose(BIOS, "bios.HI0");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
+    await openFiles("bios.HI0", "a.ocb");
     await screen.findByText("No firmware set chosen");
+    await summary();
     expect(screen.getByRole("combobox", { name: /Firmware set/ })).toBeInTheDocument();
     expect(screen.getByText("None chosen")).toBeInTheDocument();
   });
 
   it("offers Help improve support through the repository link only", async () => {
     analyzeProfile.mockResolvedValueOnce(result("E7D91IMS.HI0"));
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
     await screen.findByRole("radio", { name: "Settings" });
+    await summary();
     expect(screen.getByText("Sharing is your choice: nothing is sent automatically.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Help improve support" }));
     expect(openPage).toHaveBeenCalledWith("https://github.com/wapenshaw/ocb-inspector/issues/new?template=profile_report.yml");
@@ -206,8 +228,8 @@ describe("Analyze: rendering", () => {
 describe("Analyze: settings table", () => {
   it("renders at most ROW_LIMIT settings and says how many are left out", async () => {
     analyzeProfile.mockResolvedValueOnce(analysisFixture({ set: 0, extra: 1200 }));
-    const { container } = render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
+    const { container } = renderAnalyze();
+    await openFiles("", "a.ocb");
     await userEvent.click(await screen.findByRole("radio", { name: "Settings" }));
     // The list starts on the two settings that differ from their default; the rest are reachable under All.
     await userEvent.click(within(screen.getByRole("radiogroup", { name: "Compared with the BIOS optimized default" })).getByRole("radio", { name: "All" }));
@@ -218,8 +240,8 @@ describe("Analyze: settings table", () => {
 
   it("shows the evidence chain for a selected setting in the side panel", async () => {
     analyzeProfile.mockResolvedValueOnce(analysisFixture({ set: 0 }));
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
     await userEvent.click(await screen.findByRole("radio", { name: "Settings" }));
     await userEvent.click(screen.getByText("PCH Thermal Throttling"));
 
@@ -232,8 +254,8 @@ describe("Analyze: settings table", () => {
 describe("Analyze: firmware variable names", () => {
   it("names a record from the BIOS's variable list and says what each piece of evidence rests on", async () => {
     analyzeProfile.mockResolvedValueOnce(analysisFixture({ set: 0 }));
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
     await userEvent.click(await screen.findByRole("radio", { name: "Records" }));
     expect(screen.getByText("NetworkStackVar")).toBeInTheDocument();
     expect(screen.getByText(/no BIOS menu reads this variable/)).toBeInTheDocument();
@@ -250,8 +272,8 @@ describe("Analyze: comparison with the BIOS optimized default", () => {
   const picked = () => within(group()).getByRole("radio", { checked: true });
   const open = async (r: Result) => {
     analyzeProfile.mockResolvedValueOnce(r);
-    const view = render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
+    const view = renderAnalyze();
+    await openFiles("", "a.ocb");
     await screen.findByRole("radio", { name: "Settings" });
     return view;
   };
@@ -287,17 +309,18 @@ describe("Analyze: comparison with the BIOS optimized default", () => {
 
   it("re-applies the rule for a new result", async () => {
     analyzeProfile.mockResolvedValueOnce(analysisFixture({ set: 0 })).mockResolvedValueOnce(analysisFixture({ set: 0, noDiffs: true }));
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
     await userEvent.click(await screen.findByRole("radio", { name: "Settings" }));
     expect(picked()).toHaveAccessibleName("Differs from default");
-    await choose(PROFILE, "b.ocb");
+    await openFiles("", "b.ocb");
     await screen.findByRole("radiogroup", { name: "Compared with the BIOS optimized default" });
     expect(picked()).toHaveAccessibleName("All");
   });
 
   it("the Summary line states both counts and opens Settings with the differs filter on", async () => {
     await open(analysisFixture({ set: 0 }));
+    await summary();
     expect(
       screen.getByRole("button", {
         name: "2 settings differ from the BIOS optimized default; 2 have no optimized default and cannot be judged.",
@@ -321,20 +344,20 @@ describe("Analyze: baseline profile", () => {
   /** Three requests: the profile alone, then with the BIOS (`first`), then with the baseline (`second`). */
   async function withBaseline(first: Result, second: Result) {
     analyzeProfile.mockResolvedValueOnce(result("PROFILE-ONLY", { bios: false })).mockResolvedValueOnce(first).mockResolvedValueOnce(second);
-    const view = render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
-    await choose(BIOS, "bios.HI0");
+    const view = renderAnalyze();
+    await openFiles("", "a.ocb");
+    await openFiles("bios.HI0", "a.ocb");
     await screen.findByRole("radio", { name: "Settings" });
     await choose(ADD_BASELINE, "base.ocb");
-    await screen.findByText(second.payload.identity.profile_bios_id ?? "");
+    await seen(second.payload.identity.profile_bios_id ?? "");
     return view;
   }
 
   it("is offered only once a BIOS is chosen", async () => {
     analyzeProfile.mockResolvedValueOnce(result("PROFILE-ONLY", { bios: false }));
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
-    await screen.findByText("PROFILE-ONLY");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
+    await seen("PROFILE-ONLY");
     expect(screen.queryByRole("button", { name: ADD_BASELINE })).not.toBeInTheDocument();
   });
 
@@ -346,10 +369,10 @@ describe("Analyze: baseline profile", () => {
       .mockResolvedValueOnce(result("PLAIN-ID"))
       .mockReturnValueOnce(earlier.promise)
       .mockReturnValueOnce(newer.promise);
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
-    await choose(BIOS, "bios.HI0");
-    await screen.findByText("PLAIN-ID");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
+    await openFiles("bios.HI0", "a.ocb");
+    await seen("PLAIN-ID");
 
     await choose(ADD_BASELINE, "base1.ocb");
     expect(analyzeProfile).toHaveBeenLastCalledWith({ profile: "a.ocb", bios: "bios.HI0", set: null, baseline: "base1.ocb" });
@@ -364,7 +387,7 @@ describe("Analyze: baseline profile", () => {
     expect(saveButton()).toBeDisabled();
 
     await act(async () => newer.resolve(result("NEWER-ID", { set: 0, baseline: "applied" })));
-    expect(await screen.findByText("NEWER-ID")).toBeInTheDocument();
+    expect(await seen("NEWER-ID")).toBeInTheDocument();
     expect(saveButton()).toBeEnabled();
   });
 
@@ -373,7 +396,7 @@ describe("Analyze: baseline profile", () => {
     analyzeProfile.mockResolvedValueOnce(result("CLEARED-ID", { set: 0 }));
     await userEvent.click(screen.getAllByRole("button", { name: "Remove baseline" })[0]!);
     expect(analyzeProfile).toHaveBeenLastCalledWith({ profile: "a.ocb", bios: "bios.HI0", set: null });
-    expect(await screen.findByText("CLEARED-ID")).toBeInTheDocument();
+    expect(await seen("CLEARED-ID")).toBeInTheDocument();
   });
 
   it("a blocked baseline shows its reason calmly and no baseline column or filter", async () => {
@@ -441,25 +464,17 @@ describe("Analyze: baseline profile", () => {
     expect(within(filterGroup()).getByRole("radio", { checked: true })).toHaveAccessibleName("Likely your settings");
   });
 
-  it("keeps the baseline and its BIOS when the main BIOS changes, and offers the baseline BIOS only with a baseline", async () => {
+  it("offers the baseline BIOS only with a baseline", async () => {
     analyzeProfile.mockResolvedValue(result("ANY-ID", { set: 0 }));
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
-    await choose(BIOS, "bios.HI0");
-    await screen.findByText("ANY-ID");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
+    await openFiles("bios.HI0", "a.ocb");
+    await seen("ANY-ID");
     expect(screen.queryByRole("button", { name: /baseline BIOS/ })).not.toBeInTheDocument();
     await choose(/Add baseline profile/, "base.ocb");
     await choose(/Add baseline BIOS/, "old.HI0");
     expect(analyzeProfile).toHaveBeenLastCalledWith({ profile: "a.ocb", bios: "bios.HI0", set: null, baseline: "base.ocb", baselineBios: "old.HI0" });
 
-    await choose(/Change BIOS/, "bios2.HJ0");
-    expect(analyzeProfile).toHaveBeenLastCalledWith({
-      profile: "a.ocb",
-      bios: "bios2.HJ0",
-      set: null,
-      baseline: "base.ocb",
-      baselineBios: "old.HI0",
-    });
     expect(screen.getByRole("button", { name: "Change baseline" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Change baseline BIOS" })).toBeInTheDocument();
   });
@@ -477,7 +492,7 @@ describe("Analyze: baseline profile", () => {
     analyzeProfile.mockResolvedValueOnce(result("LATEST-ID", { set: 0, baseline: "applied" }));
     await userEvent.click(screen.getByRole("button", { name: "Remove baseline BIOS" }));
     expect(analyzeProfile).toHaveBeenLastCalledWith({ profile: "a.ocb", bios: "bios.HI0", set: null, baseline: "base.ocb" });
-    expect(await screen.findByText("LATEST-ID")).toBeInTheDocument();
+    expect(await seen("LATEST-ID")).toBeInTheDocument();
     await act(async () => pending.resolve(result("STALE-ID", { set: 0, baseline: "applied", cross: true })));
     expect(screen.queryByText("STALE-ID")).not.toBeInTheDocument();
     expect(screen.getByText("LATEST-ID")).toBeInTheDocument();
@@ -488,7 +503,7 @@ describe("Analyze: baseline profile", () => {
     await withBaseline(result("PLAIN-ID", { set: 0 }), result("APPLIED-ID", { set: 0, baseline: "applied" }));
     analyzeProfile.mockResolvedValueOnce(applied);
     await choose(/Add baseline BIOS/, "old.HI0");
-    await screen.findByText("CROSS-ID");
+    await seen("CROSS-ID");
     pickSave.mockResolvedValueOnce("C:/out/a.analysis.json");
     saveAnalysis.mockResolvedValueOnce("C:/out/a.analysis.json");
     await userEvent.click(saveButton());
@@ -511,9 +526,10 @@ describe("Analyze: baseline profile", () => {
 
   it("puts the facts and reasons in the Summary, not above the tabs", async () => {
     analyzeProfile.mockResolvedValueOnce(result("E7D91IMS.HI0", { set: 0 }));
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
     await screen.findByRole("radio", { name: "Settings" });
+    await summary();
     expect(screen.getByText("Why the result looks like this")).toBeInTheDocument();
     expect(screen.getByText("Identifier in profile")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("radio", { name: "Settings" }));
@@ -548,16 +564,16 @@ describe("Analyze: shareable report", () => {
   it("says what it leaves out and is disabled until the result for these files is shown", async () => {
     const first = deferred<Result>();
     analyzeProfile.mockReturnValueOnce(first.promise).mockReturnValueOnce(new Promise(() => {}));
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
     expect(shareButton()).toBeDisabled();
     expect(screen.getByText(NOTE)).toBeInTheDocument();
     expect(shareButton()).toHaveAccessibleDescription(NOTE);
 
     await act(async () => first.resolve(result("FIRST-ID")));
-    await screen.findByText("FIRST-ID");
+    await seen("FIRST-ID");
     expect(shareButton()).toBeEnabled();
-    await choose(PROFILE, "c.ocb");
+    await openFiles("", "c.ocb");
     expect(shareButton()).toBeDisabled();
   });
 
@@ -566,9 +582,9 @@ describe("Analyze: shareable report", () => {
     analyzeProfile.mockResolvedValueOnce(r);
     pickSave.mockResolvedValueOnce("C:/out/a.shareable.analysis.json");
     saveAnalysis.mockResolvedValueOnce("C:/out/a.shareable.analysis.json");
-    render(<Analyze />);
-    await choose(PROFILE, "a.ocb");
-    await screen.findByText("SHARE-ID");
+    renderAnalyze();
+    await openFiles("", "a.ocb");
+    await seen("SHARE-ID");
     await userEvent.click(shareButton());
 
     expect(pickSave).toHaveBeenCalledWith("a.shareable.analysis.json", "json", "Save shareable report");
@@ -576,5 +592,93 @@ describe("Analyze: shareable report", () => {
       expect(saveAnalysis).toHaveBeenCalledWith({ profile: "a.ocb", bios: null, set: null }, r.payload.inputs, "C:/out/a.shareable.analysis.json", true),
     );
     expect(await screen.findByText("C:/out/a.shareable.analysis.json")).toBeInTheDocument();
+  });
+});
+
+describe("Analyze: automatic fallback view", () => {
+  const MISMATCH = "profile was saved by E7D91IMS.HJ0 but this BIOS image is E7D25IMS.HP0; open E7D91IMS.HJ0 instead";
+
+  function withIdentity(status: "match" | "mismatch" | "unknown" | "conflicting", reason: string): Result {
+    const r = analysisFixture({ set: 0 });
+    r.payload.identity.status = status;
+    r.payload.identity.reason = reason;
+    if (status !== "match") r.payload.fields = [];
+    return r;
+  }
+
+  it("renders nothing until a profile is given, and has no start screen", () => {
+    const { container } = renderAnalyze();
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("refuses a BIOS that did not save the profile: no tabs, no settings, nothing to save", async () => {
+    analyzeProfile.mockResolvedValueOnce(withIdentity("mismatch", MISMATCH));
+    renderAnalyze();
+    await openFiles("E7D25IMS.HP0", "a.ocb");
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText("Profile and BIOS do not match")).toBeInTheDocument();
+    expect(within(alert).getByText(MISMATCH)).toBeInTheDocument();
+    expect(within(alert).getByText("Settings stay closed until the profile is paired with the BIOS image that saved it.")).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Settings" })).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getByRole("button", { name: "Save analysis" })).toBeDisabled();
+    await userEvent.click(within(alert).getByRole("button", { name: "Choose matching BIOS" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses the same way when the engine rejects the request as a mismatch", async () => {
+    analyzeProfile.mockRejectedValueOnce({ code: "identity_mismatch", exit_code: 4, message: `BIOS/profile identity mismatch: ${MISMATCH}` });
+    renderAnalyze();
+    await openFiles("E7D25IMS.HP0", "a.ocb");
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText(MISMATCH)).toBeInTheDocument();
+    expect(within(alert).queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(within(alert).getByRole("button", { name: "Choose matching BIOS" })).toBeInTheDocument();
+  });
+
+  it("says plainly when the BIOS could not be confirmed, never an empty unexplained view", async () => {
+    analyzeProfile.mockResolvedValueOnce(withIdentity("unknown", "The profile names no BIOS."));
+    renderAnalyze();
+    await openFiles("bios.HI0", "a.ocb");
+    const note = (await screen.findByText("Could not confirm that this BIOS saved the profile")).closest("[role=note]") as HTMLElement;
+    expect(note).toHaveTextContent("The profile names no BIOS.");
+    await userEvent.click(screen.getByRole("radio", { name: "Settings" }));
+    expect(screen.getByText(/Settings are read only once this BIOS is confirmed/)).toBeInTheDocument();
+  });
+
+  it("opens a matching result on Settings and shows the one-line fallback notice", async () => {
+    analyzeProfile.mockResolvedValueOnce(withIdentity("match", "ok"));
+    renderAnalyze();
+    await openFiles("bios.HI0", "a.ocb");
+    expect(await screen.findByRole("radio", { name: "Settings" })).toBeChecked();
+    expect(screen.getByText(/^Not verified on this board: settings are read from the BIOS's own definitions/)).toBeInTheDocument();
+    expect(screen.queryByText(/Match verified|checksum valid/)).toBeNull();
+  });
+
+  it("offers no file choosing of its own, and Change files returns to the picker", async () => {
+    analyzeProfile.mockResolvedValueOnce(analysisFixture({ set: 0 }));
+    renderAnalyze();
+    await openFiles("bios.HI0", "a.ocb");
+    await screen.findByRole("radio", { name: "Settings" });
+    for (const name of [/Change profile/, /Change BIOS$/, /Remove BIOS/, /Add BIOS image/, /Start over/]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    await userEvent.click(screen.getByRole("button", { name: "Change files" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("radio", { name: "Settings" })).toBeNull();
+  });
+
+  it("notes the settings with no default, until a baseline is applied", async () => {
+    analyzeProfile.mockResolvedValueOnce(analysisFixture({ set: 0 }));
+    renderAnalyze();
+    await openFiles("bios.HI0", "a.ocb");
+    const note = await screen.findByTestId("no-default-note");
+    expect(note).toHaveTextContent(
+      "2 settings have no BIOS default to compare with, so they cannot be marked as differing. Add a baseline profile saved at BIOS defaults to compare them.",
+    );
+    analyzeProfile.mockResolvedValueOnce(analysisFixture({ set: 0, baseline: "applied" }));
+    await choose(/Add baseline profile/, "base.ocb");
+    await screen.findByRole("columnheader", { name: "Baseline" });
+    expect(screen.queryByTestId("no-default-note")).toBeNull();
   });
 });

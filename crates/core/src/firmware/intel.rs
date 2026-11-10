@@ -93,24 +93,24 @@ pub(crate) fn analyze(ctx: Context, scanned: &[ScannedFormset]) -> Analysis {
         if platform.profiles_supported && size != Some(PROFILE_CPUSETUP_SIZE) {
             platform.profiles_supported = false;
             platform.profiles_note = format!(
-                "This BIOS uses a {}-byte CpuSetup layout (another Intel generation than the profiles examined so far, which use {PROFILE_CPUSETUP_SIZE}), and some settings with the same name mean different things there. Profiles cannot be opened yet; browse the BIOS instead.",
+                "This BIOS uses a {}-byte CpuSetup layout (another Intel generation than the profiles examined so far, which use {PROFILE_CPUSETUP_SIZE}), and some settings with the same name mean different things there. The legacy recipe-based workflow is unavailable; read-only profile analysis may still be possible.",
                 size.map_or_else(|| "different".to_string(), |s| s.to_string())
             );
         }
     } else {
         platform.profiles_supported = false;
-        platform.profiles_note = "This older Intel layout keeps CPU settings in Setup (no CpuSetup store), and no profile from it has been examined. Browse the BIOS instead."
+        platform.profiles_note = "This older Intel layout keeps CPU settings in Setup (no CpuSetup store), and no profile from it has been examined. The legacy recipe-based workflow is unavailable; read-only profile analysis may still be possible."
             .into();
     }
     let formsets = assemble(scanned, main, &socket, None, ctx.copies());
     let schema = match candidates.as_slice() {
         [one] => schema(&ctx, &scanned[*one], platform.clone(), diagnostics.clone()),
         [] if !socket.is_empty() => Err(Error::Unsupported(
-            "this is an Intel HEDT (socket) BIOS: CPU settings live in Setup and Socket* stores rather than CpuSetup, and no profile from this layout has been examined, so profiles cannot be opened. The BIOS itself can be browsed."
+            "this is an Intel HEDT (socket) BIOS: CPU settings live in Setup and Socket* stores rather than CpuSetup, and no profile from this layout has been examined, so the legacy recipe-based workflow is unavailable. Read-only profile analysis may still be possible."
                 .into(),
         )),
         [] => Err(Error::Unsupported(
-            "this older Intel BIOS keeps CPU settings in Setup and has no CpuSetup store, and no profile from this layout has been examined, so profiles cannot be opened. The BIOS itself can be browsed."
+            "this older Intel BIOS keeps CPU settings in Setup and has no CpuSetup store, and no profile from this layout has been examined, so the legacy recipe-based workflow is unavailable. Read-only profile analysis may still be possible."
                 .into(),
         )),
         many => Err(Error::Unsupported(format!(

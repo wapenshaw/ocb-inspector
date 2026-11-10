@@ -6,11 +6,12 @@ export type Tone = "ok" | "attention" | "blocked" | "neutral" | "accent" | "mod"
 
 const icons: Record<Tone, IconName> = { ok: "check", attention: "alert", blocked: "block", neutral: "dot", accent: "arrow", mod: "diff" };
 
-export function Status({ tone = "neutral", text, title = "" }: { tone?: Tone; text: string; title?: string }) {
+/** `compact` shows the icon alone: the text stays for screen readers and, with `title`, on hover. */
+export function Status({ tone = "neutral", text, title = "", compact = false }: { tone?: Tone; text: string; title?: string; compact?: boolean }) {
   return (
-    <span className={`${s.status} ${s[tone]}`} title={title || undefined}>
-      <Icon name={icons[tone]} size={13} />
-      {text}
+    <span className={`${s.status} ${s[tone]}`} title={compact ? [text, title].filter(Boolean).join(". ") : title || undefined}>
+      <Icon name={icons[tone]} size={compact ? 15 : 13} />
+      {compact ? <span className="visually-hidden">{text}</span> : text}
     </span>
   );
 }

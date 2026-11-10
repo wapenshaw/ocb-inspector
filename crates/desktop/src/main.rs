@@ -643,12 +643,28 @@ fn open_main_window(app: &tauri::App) -> Result<(), String> {
         .first()
         .cloned()
         .ok_or("no window configured")?;
-    tauri::WebviewWindowBuilder::from_config(app.handle(), &cfg)
+    let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &cfg)
         .map_err(|e| e.to_string())?
         .data_directory(data)
         .build()
         .map_err(|e| e.to_string())?;
+    fit_to_monitor(&window, cfg.width, cfg.height);
     Ok(())
+}
+
+/// The default size suits a large screen; on a smaller one the window shrinks to fit. Best
+/// effort: any failure leaves the configured size.
+fn fit_to_monitor(window: &tauri::WebviewWindow, width: f64, height: f64) {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return;
+    };
+    let area = monitor.size().to_logical::<f64>(monitor.scale_factor());
+    // Room for the window frame and the taskbar.
+    let (max_w, max_h) = (area.width - 40.0, area.height - 100.0);
+    if width > max_w || height > max_h {
+        let _ = window.set_size(tauri::LogicalSize::new(width.min(max_w), height.min(max_h)));
+        let _ = window.center();
+    }
 }
 
 fn main() {
