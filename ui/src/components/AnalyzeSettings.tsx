@@ -371,4 +371,3 @@ function EvidenceItem({ id, entry }: { id: string; entry: Evidence | undefined }
     </div>
   );
 }
-
