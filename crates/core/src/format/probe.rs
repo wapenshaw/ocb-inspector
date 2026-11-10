@@ -492,7 +492,7 @@ fn known(bytes: &[u8], budget: &mut Budget) -> Result<ContainerCandidate> {
         id,
         RULE_KNOWN,
         vec![
-            "Layout established on MS-7D91 profiles; elsewhere a candidate only".into(),
+            "Layout established on the profiles examined so far; elsewhere a candidate only".into(),
             "12-byte identifier at 0x05, checksum at 0x11, record count at 0x15, records at 0x19"
                 .into(),
             "256 bytes between record end and $OCI$, 24 bytes after its four strings".into(),

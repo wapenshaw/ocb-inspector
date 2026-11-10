@@ -1,11 +1,14 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { api, errorMessage, pickSave } from "../api";
 import type { BuildResult, DecodedSetting, EditPreview, InspectPayload, Operation, RawField, Report, Value } from "../api/types";
+import { INTEGRITY_LABEL, INTEGRITY_TONE, MAPPING_LABEL, MAPPING_TONE } from "../lib/analysis";
 import { cpuShort, display, fileName, hex, sameIntent, savedAt, shortHash } from "../lib/format";
 import { menuPages, menuSort, NOT_IN_BIOS, pageBefore, pageKey, sectionBefore, type Page, pageLabel } from "../lib/menu";
 import { cx } from "../lib/cx";
 import { moveRow } from "../lib/rows";
 import { useAction } from "../lib/useAction";
+import type { UnverifiedView, RowInfo } from "../lib/unverified";
+import { ReviewedReading, ReviewedDetails } from "./ReviewedReading";
 import { useApp } from "../state/app";
 import { Browse, type BrowseHandle } from "./Browse";
 import { Checks } from "./Checks";
@@ -16,6 +19,7 @@ import { PairPicker, type PairPickerHandle } from "./PairPicker";
 import { ResultPanel } from "./ResultPanel";
 import { Status, type Tone } from "./Status";
 import { UntestedNote } from "./UntestedNote";
+import { UnverifiedNote } from "./UnverifiedNote";
 import { SwapLabel } from "./SwapLabel";
 import { ValueEditor } from "./ValueEditor";
 import { ValueText } from "./ValueText";
@@ -31,7 +35,7 @@ interface InspectProps {
   /** This view is on screen: its keyboard shortcuts are live. */
   active: boolean;
   /** Open the experimental analysis with these paths (empty strings mean not chosen). */
-  onAnalyze?: (bios: string, profile: string) => void;
+  onAnalyze?: (bios: string, profile: string, fromProfile?: boolean, set?: number | null) => void;
 }
 
 type Filter = "all" | "defaults" | "edited";
@@ -45,7 +49,7 @@ interface CheckState {
 const IDLE: CheckState = { state: "idle", message: "", preview: null };
 const EMPTY: Record<string, Value> = {};
 // Settings table columns: title and width (the last takes the rest).
-const READ_COLUMNS: [string, string?][] = [["Setting", "36%"], ["Saved", "22%"], ["Default", "22%"], ["Status"]];
+const READ_COLUMNS: [string, string?][] = [["Setting"], ["Saved", "21%"], ["Default", "21%"], ["Status", "136px"]];
 const WRITE_COLUMNS: [string, string?][] = [["Setting", "30%"], ["Saved", "17%"], ["Default", "14%"], ["Proposed", "15%"], ["Status"]];
 const HEAT_TEXT: Record<string, string> = {
   "heat-4": "edit staged",
@@ -63,6 +67,7 @@ const rawOff = (f: RawField) => f.default_raw != null && f.default_raw !== f.raw
 const rawOf = (v: Value | null | undefined) => (v?.kind === "enum" ? v.raw : v?.kind === "boolean" ? Number(v.value) : undefined);
 
 interface SettingRowProps {
+  info?: RowInfo;
   x: DecodedSetting;
   index: number;
   heat: string;
@@ -78,7 +83,7 @@ interface SettingRowProps {
 
 // One settings row. Memoised with plain props, so selecting a row or staging an edit re-renders
 // only the rows that changed.
-const SettingRow = memo(function SettingRow({ x, index, heat, selected, staged, tone, text, writing, onSelect, onKey }: SettingRowProps) {
+const SettingRow = memo(function SettingRow({ x, info, index, heat, selected, staged, tone, text, writing, onSelect, onKey }: SettingRowProps) {
   return (
     <tr
       id={`row-${x.setting_id}`}
@@ -98,8 +103,9 @@ const SettingRow = memo(function SettingRow({ x, index, heat, selected, staged, 
       </td>
       <td>
         <ValueText value={x.value} />
+        <ReviewedReading reading={info?.reviewed} source="saved" originalText={display(x.value)} />
       </td>
-      <td className="quiet">{x.default_value ? <ValueText value={x.default_value} /> : <span className="faint">—</span>}</td>
+      <td className="quiet">{x.default_value ? <ValueText value={x.default_value} /> : <span className="faint">—</span>}<ReviewedReading reading={info?.reviewed} source="default" originalText={x.default_value ? display(x.default_value) : undefined} /></td>
       {writing && (
         <td className={staged ? "strong" : undefined}>{staged ? <ValueText value={staged} /> : <span className="faint">No change</span>}</td>
       )}
@@ -128,6 +134,8 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
   const [bios, setBios] = useState("");
   const [profile, setProfile] = useState("");
   const [report, setReport] = useState<Report<InspectPayload> | null>(null);
+  // The primary BIOS-derived read-only pair; never set with the legacy writing `report`.
+  const [unv, setUnv] = useState<UnverifiedView | null>(null);
   const picker = useRef<PairPickerHandle>(null);
   const browser = useRef<BrowseHandle>(null);
 
@@ -154,15 +162,21 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
   const exporter = useAction();
 
   const p = report?.payload ?? null;
+  // Writing is only ever offered for a pair the validated reader opened, whatever the setting says.
+  const writing = app.writing && !unv;
   // Columns in the settings table: Proposed only exists when writing is on.
-  const columns = app.writing ? WRITE_COLUMNS : READ_COLUMNS;
+  const columns = writing ? WRITE_COLUMNS : READ_COLUMNS;
   const cols = columns.length;
   const writable = !!p?.capabilities.image_approved_for_writing;
   /** Why the image is inspect-only, including where the approvals file was looked for. */
   const approvalNote = report?.diagnostics.find((d) => d.code === "image_not_approved")?.message ?? "";
-  const hasDefaults = !!p?.bios.defaults?.available;
-  // Reviewed settings plus every other setting the BIOS menus show (read only).
-  const all = useMemo<DecodedSetting[]>(() => (p ? [...p.settings, ...(p.bios_settings ?? [])] : []), [p]);
+  // Unverified: the BIOS gave a default for at least one row (rows without one are told apart below).
+  const hasDefaults = p ? !!p.bios.defaults?.available : !!unv && unv.noDefault < unv.settings.length;
+  // Reviewed settings plus every other setting the BIOS menus show (read only); or every field of an unverified pair.
+  const all = useMemo<DecodedSetting[]>(
+    () => (p ? [...p.settings, ...(p.bios_settings ?? [])] : (unv?.settings ?? [])),
+    [p, unv],
+  );
   const pages = useMemo<Page[]>(() => menuPages(all), [all]);
   const absent = all.filter((x) => !x.menu);
 
@@ -295,6 +309,7 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
   /** A new pair was read (or cleared): start fresh on its first page. */
   function loaded(r: Report<InspectPayload> | null) {
     setReport(r);
+    setUnv(null);
     setTimeline({ history: [{}], cursor: 0 });
     setMode("table");
     const first = r ? menuSort(r.payload.settings)[0] : null;
@@ -304,9 +319,23 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
     setQuery("");
   }
 
+  /** An unverified pair was read: open on what differs from the BIOS default, if anything does. */
+  function loadedUnverified(v: UnverifiedView) {
+    setReport(null);
+    setUnv(v);
+    setTimeline({ history: [{}], cursor: 0 });
+    setMode("table");
+    const first = menuSort(v.settings).find((setting) => v.differs === 0 || offDefault(setting));
+    setSelectedId(first?.setting_id ?? null);
+    setGroup(first?.menu ? pageKey(first.menu.path) : "");
+    setFilter(v.differs > 0 ? "defaults" : "all");
+    setQuery("");
+  }
+
   function openFile() {
     onBrowsingChange(null);
     setReport(null);
+    setUnv(null);
     void picker.current?.chooseBios();
   }
 
@@ -327,7 +356,7 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
     } else if (k === "f") {
       e.preventDefault();
       focusSearch();
-    } else if (k === "z" && app.writing && !(e.target instanceof HTMLInputElement)) {
+    } else if (k === "z" && writing && !(e.target instanceof HTMLInputElement)) {
       e.preventDefault();
       if (e.shiftKey) redo();
       else undo();
@@ -374,16 +403,20 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
     if (x.setting_id in staged) return { tone: "accent", text: "Edited" };
     if (!x.available) return { tone: "neutral", text: "Not in this BIOS" };
     if (x.value?.kind === "unknown") return { tone: "attention", text: "Unknown value" };
+    if (x.value === null) return { tone: "attention", text: "Not interpreted" };
     if (offDefault(x)) return { tone: "mod", text: "Not at default" };
-    if (app.writing && !x.editability.writable) return { tone: "neutral", text: "Read only" };
+    // Without a default the row is neither at it nor off it.
+    if (hasDefaults && x.differs_from_default === null) return { tone: "neutral", text: "No default" };
+    if (writing && !x.editability.writable) return { tone: "neutral", text: "Read only" };
     if (x.activity === "inactive") return { tone: "neutral", text: "Inactive" };
+    if (unv?.rows.get(x.setting_id)?.hidden) return { tone: "neutral", text: "Hidden in the menus" };
     return { tone: "neutral", text: "" };
   }
 
   /** Heat level for a row: 4 staged, 3 off stock, 0 stock Auto, 1 stock fixed value ("" when defaults are unknown). */
   function heatOf(x: DecodedSetting): string {
     if (x.setting_id in staged) return "heat-4";
-    if (!hasDefaults || !x.available) return "";
+    if (!hasDefaults || !x.available || x.differs_from_default === null) return "";
     if (offDefault(x)) return "heat-3";
     return x.value?.kind === "auto" || (x.value?.kind === "enum" && x.value.label === "Auto") ? "heat-0" : "heat-1";
   }
@@ -402,6 +435,7 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
   }
 
   function settingDetails(x: DecodedSetting): ReactNode {
+    const info = unv?.rows.get(x.setting_id);
     const current = staged[x.setting_id] ?? x.value;
     const alsoOn = x.menu?.also_on ?? [];
     return (
@@ -413,7 +447,12 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
           </p>
         )}
         <h2>{nameOf(x)}</h2>
-        {reviewed(x) ? (
+        {info ? (
+          <p className={css.kind}>
+            <Status tone={MAPPING_TONE[info.mapping]} text={MAPPING_LABEL[info.mapping]} /> Read from the BIOS's own menu
+            definition and shown as the BIOS labels it. Mapping evidence is listed below.
+          </p>
+        ) : reviewed(x) ? (
           <p className={css.kind}>
             <span className="rv">reviewed</span> Values, units and dependencies checked against real profiles.
           </p>
@@ -431,7 +470,7 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
           </p>
         )}
 
-        {app.writing && (
+        {writing && (
           <div className={css.editbox} id="inspector-edit" tabIndex={-1}>
             {x.available && x.editability.writable && x.constraints ? (
               <>
@@ -463,7 +502,7 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
           </div>
         )}
 
-        {!app.writing && x.available && (
+        {!writing && x.available && (
           <div className={css.savedbox}>
             <span className="faint">Saved in this profile</span>
             <strong>
@@ -474,7 +513,9 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
 
         {hasDefaults && x.available && (
           <div className={cx(css.defbox, offDefault(x) && css.offdef)}>
-            {offDefault(x) ? (
+            {x.differs_from_default === null ? (
+              <Status text="No BIOS default to compare with" />
+            ) : offDefault(x) ? (
               <>
                 <Status tone="mod" text="Not at default" />
                 <p>
@@ -487,7 +528,7 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
           </div>
         )}
 
-        {!app.writing && x.constraints?.options.length ? (
+        {!writing && x.constraints?.options.length ? (
           <>
             <h3>Choices</h3>
             <ul className={css.choices}>
@@ -503,7 +544,7 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
               })}
             </ul>
           </>
-        ) : !app.writing && x.constraints && (x.constraints.min != null || x.constraints.max != null) ? (
+        ) : !writing && x.constraints && (x.constraints.min != null || x.constraints.max != null) ? (
           <>
             <h3>Allowed</h3>
             <p className="quiet">
@@ -566,9 +607,54 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
           </>
         )}
 
+        {info && (
+          <>
+            <ReviewedDetails reading={info.reviewed} />
+            <h3>Where it is stored</h3>
+            <dl className={css.ev}>
+              <dt>Location</dt>
+              <dd>
+                <span className="mono">
+                  {info.store}+{hex(info.storeOffset)}
+                </span>
+                {info.span ? (
+                  <>
+                    , profile bytes <span className="mono">{hex(info.span.start)}</span> to{" "}
+                    <span className="mono">{hex(info.span.end)}</span>
+                  </>
+                ) : null}
+                , {info.widthBits} bits
+              </dd>
+              {info.raw && (
+                <>
+                  <dt>Stored value</dt>
+                  <dd>
+                    <span className="mono">{info.raw.dec}</span> <span className="mono faint">({info.raw.hex})</span>
+                    <p className="quiet">Raw numbers use the stored encoding. Units and signed adjustments may depend on another BIOS setting.</p>
+                  </dd>
+                </>
+              )}
+              <dt>Raw optimized default</dt>
+              <dd>{info.defaultRaw ? `${info.defaultRaw.dec} (${info.defaultRaw.hex})` : "Unknown"}</dd>
+              {info.note && (
+                <>
+                  <dt>Not interpreted</dt>
+                  <dd>{info.note}</dd>
+                </>
+              )}
+              <dt>Firmware</dt>
+              <dd>
+                {info.callback ? "Handled by a firmware callback" : "Plain stored value"}
+                {info.hidden ? ", hidden in the menus" : ""}
+                {info.conditional ? ", shown only under a condition" : ""}
+              </dd>
+            </dl>
+          </>
+        )}
+
         <h3>Evidence</h3>
         <ul className={css.evidence}>
-          {x.evidence.map((e, i) => (
+          {(info ? info.evidence : x.evidence).map((e, i) => (
             <li key={i}>{e}</li>
           ))}
         </ul>
@@ -583,7 +669,7 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
         <p className="quiet">
           Every named field the firmware defines in its Setup and CpuSetup stores, grouped by the BIOS page that shows it, with
           the value this profile holds.
-          {app.writing ? " Only reviewed settings can be edited; these are shown for reference." : ""}
+          {writing ? " Only reviewed settings can be edited; these are shown for reference." : ""}
         </p>
         {hasDefaults && (
           <p className="quiet">
@@ -716,6 +802,7 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
                     </tr>
                   ) : null}
                   <SettingRow
+                    info={unv?.rows.get(x.setting_id)}
                     x={x}
                     index={i}
                     heat={heatOf(x)}
@@ -723,7 +810,7 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
                     staged={staged[x.setting_id]}
                     tone={st.tone}
                     text={st.text}
-                    writing={app.writing}
+                    writing={writing}
                     onSelect={setSelectedId}
                     onKey={onRowKey}
                   />
@@ -736,7 +823,7 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
                   {filter === "edited"
                     ? "No edits yet."
                     : filter === "defaults"
-                      ? "Every setting here matches the optimized defaults."
+                      ? "No setting here differs from the optimized defaults."
                       : "No settings match this search."}
                 </td>
               </tr>
@@ -749,39 +836,70 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
   }
 
   const selectedSetting = selected && group !== "raw" ? selected : null;
+  const openBios = p?.bios ?? unv?.bios ?? null;
+  const saved = p ? p.profile.saved_at : (unv?.savedAt ?? null);
+  const cpu = p ? p.profile.cpu_brand : (unv?.cpuBrand ?? null);
 
   // The open pair stays at the top in every mode (table, review, result), so switching never moves it.
-  const strip = p ? (
+  const strip = openBios ? (
     <>
-    <div className="strip" role="group" aria-label="Open pair">
-      <span className={`mono strong`}>{p.bios.bios_id}</span>
+    <div className={`strip ${css.pair}`} role="group" aria-label="Open pair">
+      <span className={`mono strong`}>{openBios.bios_id}</span>
       <Icon name="arrow" />
       <span className="strong">{fileName(profile)}</span>
-      <Status tone="ok" text="Match verified" />
-      <span className="quiet">Saved {savedAt(p.profile.saved_at)}</span>
-      <span className="quiet">{cpuShort(p.profile.cpu_brand)}</span>
+      {unv ? (
+        <>
+          <Status tone="neutral" text="BIOS match confirmed" title={unv.identityReason} />
+          {/* A caution about the checksum is a sign with the wording on hover, leaving room for the save time and CPU. */}
+          <Status
+            tone={INTEGRITY_TONE[unv.integrity]}
+            text={INTEGRITY_LABEL[unv.integrity]}
+            compact={INTEGRITY_TONE[unv.integrity] === "attention"}
+            title={INTEGRITY_TONE[unv.integrity] === "attention" ? "The profile's checksum could not be confirmed against a rule established for this board. The values shown are read as stored" : ""}
+          />
+        </>
+      ) : (
+        <Status tone="ok" text="Match verified" />
+      )}
+      {saved && <span className={`quiet ${css.meta}`}>Saved {savedAt(saved)}</span>}
+      {cpu && <span className={`quiet ${css.meta}`} title={cpu}>{cpuShort(cpu)}</span>}
       <span className="spacer"></span>
-      {app.writing && !writable && <Status tone="attention" text="Inspect only: image not approved" title={approvalNote} />}
+      {writing && p && !writable && <Status tone="attention" text="Inspect only: image not approved" title={approvalNote} />}
+      {/* One group, so a narrow window moves all three to a second line together. */}
+      <span className={css.pairActions}>
       <button className="btn ghost" onClick={() => onBrowsingChange(bios)}>
         Browse whole BIOS
       </button>
-      <button className="btn ghost" onClick={() => setReport(null)}>
+      {onAnalyze && (
+        <button className="btn ghost" onClick={() => onAnalyze(bios, profile, true, unv?.set ?? null)}>
+          All settings, baseline and sharing
+        </button>
+      )}
+      <button
+        className="btn ghost"
+        onClick={() => {
+          setReport(null);
+          setUnv(null);
+        }}
+      >
         Change files
       </button>
+      </span>
     </div>
-    <UntestedNote bioses={[p.bios]} />
+    {p && <UntestedNote bioses={[p.bios]} />}
+    {unv && <UnverifiedNote view={unv} />}
     </>
   ) : null;
 
   let body: ReactNode;
-  if (!p) {
+  if (!p && !unv) {
     body = (
       <div className={css.open} hidden={!!browsing}>
         <div className={css.intro}>
           <h1>See what an OC profile really stores</h1>
           <p className="quiet">
-            Pair a profile with the BIOS image that saved it, or open a BIOS on its own to browse every setting it defines. Settings
-            are decoded from the firmware's own definitions, not from the file name.{" "}
+            Pair a profile with the BIOS image that saved it, or open a BIOS on its own to browse every setting it defines. Recognized BIOS
+            images supply their own settings definitions; readable profile records are mapped to those definitions.{" "}
             {app.writing ? "Nothing is changed until you export a new file." : "This app only reads: it never changes or writes a file."}
           </p>
         </div>
@@ -797,7 +915,10 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
           report={report}
           onReportChange={loaded}
           onBrowse={onBrowsingChange}
-          onAnalyze={onAnalyze}
+          onAnalyze={onAnalyze ? (b, pr, set) => onAnalyze(b, pr, false, set) : undefined}
+          onUnverified={loadedUnverified}
+          legacyReader={app.writing}
+          unverified={unv}
         />
       </div>
     );
@@ -845,7 +966,7 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
                 </thead>
                 <tbody>
                   {Object.entries(staged).map(([id, v]) => {
-                    const setting = p.settings.find((x) => x.setting_id === id);
+                    const setting = p?.settings.find((x) => x.setting_id === id);
                     return (
                       <tr key={id}>
                         <td>
@@ -914,26 +1035,31 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
                     <span className={`${css.count} mono`}>{absent.length}</span>
                   </button>
                 )}
-                <div className={css.sep}></div>
-                <button
-                  className={cx(css.grp, group === "raw" && css.on)}
-                  onClick={() => {
-                    setGroup("raw");
-                    setQuery("");
-                    setFilter("all");
-                  }}
-                >
-                  <span className={css.title}>All BIOS fields</span>
-                  <span className={`${css.count} mono`}>
-                    {rawDiffers ? (
-                      <span className={css.modc} title={`${rawDiffers} not at default`}>
-                        ≠{rawDiffers}
+                {/* The unverified view has no separate field list: every field is already a row. */}
+                {p && (
+                  <>
+                    <div className={css.sep}></div>
+                    <button
+                      className={cx(css.grp, group === "raw" && css.on)}
+                      onClick={() => {
+                        setGroup("raw");
+                        setQuery("");
+                        setFilter("all");
+                      }}
+                    >
+                      <span className={css.title}>All BIOS fields</span>
+                      <span className={`${css.count} mono`}>
+                        {rawDiffers ? (
+                          <span className={css.modc} title={`${rawDiffers} not at default`}>
+                            ≠{rawDiffers}
+                          </span>
+                        ) : null}
+                        {p.raw_fields?.length ?? 0}
                       </span>
-                    ) : null}
-                    {p.raw_fields?.length ?? 0}
-                  </span>
-                </button>
-                <p className={`${css.railnote} faint`}>Every named Setup and CpuSetup field, including ones the BIOS never shows.</p>
+                    </button>
+                    <p className={`${css.railnote} faint`}>Every named Setup and CpuSetup field, including ones the BIOS never shows.</p>
+                  </>
+                )}
               </nav>
 
               <div className={css.main}>
@@ -966,7 +1092,7 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
                       Not at default
                       <span className="mono faint">{group === "raw" ? rawDiffers : differsAll}</span>
                     </label>
-                    {group !== "raw" && app.writing && (
+                    {group !== "raw" && writing && (
                       <label className={cx(filter === "edited" && "on")}>
                         <input type="radio" name="flt" value="edited" checked={filter === "edited"} onChange={() => setFilter("edited")} />
                         Edited <span className="mono faint">{changeCount}</span>
@@ -995,18 +1121,18 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
                       <span className={css.key}>
                         <i className="heat-3" aria-hidden="true"></i>Off stock
                       </span>
-                      {app.writing && (
+                      {writing && (
                         <span className={css.key}>
                           <i className="heat-4" aria-hidden="true"></i>Off stock, edit staged
                         </span>
                       )}
-                      <span className="faint" title={p.bios.defaults.source}>
+                      <span className="faint" title={p?.bios.defaults.source}>
                         Stock = the values “Load Optimized Defaults” restores
                       </span>
                     </>
                   ) : (
                     <span className="faint">
-                      No default comparison: {p.bios.defaults?.source ?? "this BIOS image has no readable optimized defaults"}.
+                      No default comparison: {p?.bios.defaults?.source ?? "this BIOS image has no readable optimized defaults"}.
                     </span>
                   )}
                 </p>
@@ -1018,12 +1144,12 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
                 {selectedSetting
                   ? settingDetails(selectedSetting)
                   : group === "raw"
-                    ? rawDetails(p)
+                    ? p && rawDetails(p)
                     : null}
               </aside>
             </div>
 
-            {app.writing && (
+            {writing && (
               <footer className="bar">
                 <div className={css.summary}>
                   {changeCount === 0 ? (
@@ -1074,10 +1200,10 @@ export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: Inspe
           key={browsing}
           ref={browser}
           bios={browsing}
-          closeLabel={p ? "Back to profile" : "Change files"}
+          closeLabel={openBios ? "Back to profile" : "Change files"}
           onClose={() => onBrowsingChange(null)}
           onProfile={
-            p
+            openBios
               ? undefined
               : () => {
                   onBrowsingChange(null);

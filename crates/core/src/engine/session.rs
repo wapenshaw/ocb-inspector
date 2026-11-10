@@ -68,7 +68,7 @@ impl Session {
             })?;
             match profile.record_by_size(usize::from(store.size)).as_slice() {
                 [r] => Ok((*r).clone()),
-                [] => Err(Error::IdentityMismatch(format!(
+                [] => Err(Error::Unsupported(format!(
                     "no profile record matches {name} size {}",
                     store.size
                 ))),
@@ -285,7 +285,7 @@ pub fn profile_evidence(p: &Platform, board: &str) -> Option<ProfileEvidence> {
 /// examined; `None` otherwise.
 pub fn untested_board_note(evidence: Option<ProfileEvidence>) -> Option<&'static str> {
     (evidence == Some(ProfileEvidence::Untested)).then_some(
-        "note: no profile from this board has been examined; the layout is assumed from MS-7D91. Check a few values against your BIOS screens.",
+        "note: no profile from this board has been examined; the layout is assumed from the boards examined so far. Check a few values against your BIOS screens.",
     )
 }
 

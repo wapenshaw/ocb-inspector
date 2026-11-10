@@ -366,6 +366,27 @@
   }
   @media (max-width: 1180px) {
     .work {
-      grid-template-columns: 200px minmax(0, 1fr) 300px;
+      grid-template-columns: 224px minmax(0, 1fr) 280px;
     }
   }
+/* The open-pair strip: nothing shrinks or is cut. When the window is too narrow for one line,
+   the buttons move to a second line and the strip grows. */
+.pair {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 48px;
+  padding-block: 6px;
+  row-gap: var(--s1);
+}
+.pair > :not(:global(.spacer)) {
+  flex: none;
+}
+.meta {
+  white-space: nowrap;
+}
+.pairActions {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-left: auto;
+}

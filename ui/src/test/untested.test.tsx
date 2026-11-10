@@ -7,6 +7,7 @@ const pickFile = vi.fn();
 const biosSummary = vi.fn();
 const inspect = vi.fn();
 vi.mock("../api", async (original) => ({ ...(await original<typeof import("../api")>()), pickFile, api: { biosSummary, inspect } }));
+const { appStore } = await import("../state/app");
 const { Inspect } = await import("../components/Inspect");
 
 type Evidence = "examined" | "untested" | undefined;
@@ -59,6 +60,7 @@ async function open(evidence: Evidence) {
 
 describe("untested board note", () => {
   beforeEach(() => {
+    appStore.set({ writing: true });
     pickFile.mockReset();
     biosSummary.mockReset();
     inspect.mockReset();
@@ -68,7 +70,7 @@ describe("untested board note", () => {
     await open("untested");
     expect(screen.getByText(UNTESTED_TEXT)).toBeInTheDocument();
     expect(UNTESTED_TEXT).toBe(
-      "No profile from this board has been examined: the layout is assumed from MS-7D91. Check a few values against your BIOS screens.",
+      "No profile from this board has been examined: the layout is assumed from the boards examined so far. Check a few values against your BIOS screens.",
     );
     expect(screen.getByText("Match verified")).toBeInTheDocument();
   });

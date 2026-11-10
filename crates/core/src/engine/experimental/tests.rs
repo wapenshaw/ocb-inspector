@@ -176,6 +176,7 @@ fn run(
     let bios = img.map(|image| BiosRef {
         image,
         profiles_supported: false,
+        schema: None,
     });
     let opts = AnalyzeOptions {
         set,
@@ -200,9 +201,10 @@ fn the_established_layout_confirms_the_validated_binding_and_infers_the_rest() {
     assert_eq!(p.container, "established");
     assert_eq!(p.identity.status, "match");
     assert_eq!(p.integrity.status, "verified");
-    assert_eq!(rec(&p, "r0").mapping, "confirmed"); // Setup, first record
-    assert_eq!(rec(&p, "r2").mapping, "confirmed"); // CpuSetup
-    assert_eq!(rec(&p, "r3").mapping, "inferred"); // PchSetup: unique size, no reviewed rule
+    // No variable list in this image, so sizes are the only source: nothing is confirmed.
+    assert_eq!(rec(&p, "r0").mapping, "inferred"); // Setup, first record
+    assert_eq!(rec(&p, "r2").mapping, "inferred"); // CpuSetup
+    assert_eq!(rec(&p, "r3").mapping, "inferred"); // PchSetup: unique size
     assert_eq!(rec(&p, "r1").mapping, "unmapped"); // empty
     // Setup payload starts at 0x19 + 6; the switch is its byte 2.
     let f = field(&p, "Setup switch");
@@ -250,7 +252,7 @@ fn another_board_is_a_candidate_whose_mappings_are_only_inferred() {
     assert_eq!(p.selected_candidate.as_deref(), Some("variable_header/14"));
     assert_eq!(p.identity.status, "match");
     // The builder wrote the additive checksum at 5 + 14 = 19, so the trial matches.
-    assert_eq!(p.integrity.status, "candidate_match");
+    assert_eq!(p.integrity.status, "verified");
     assert_eq!(p.integrity.checksum_at, Some(19));
     for r in ["r0", "r2", "r3"] {
         assert_eq!(rec(&p, r).mapping, "inferred", "{r}");
@@ -529,6 +531,7 @@ fn limits_end_the_analysis_with_a_typed_error() {
     let bios = BiosRef {
         image: &img,
         profiles_supported: false,
+        schema: None,
     };
     assert!(matches!(
         analyze_profile(&b, Some(bios), &opts),
@@ -841,11 +844,11 @@ fn a_traced_release_stops_at_a_checksum_its_loader_rejects() {
     let mut s = Spec::known("E7D26IMS", "1Q0", standard_records());
     s.checksum = false;
     let p = run(&build(&s), Some(&img), None).unwrap();
-    assert_eq!(p.integrity.status, "unknown");
+    assert_eq!(p.integrity.status, "failed");
     assert!(
         p.status_reasons
             .iter()
-            .any(|r| r.contains("traced profile loader rejects")),
+            .any(|r| r.contains("checksum does not match")),
         "{:?}",
         p.status_reasons
     );
@@ -853,7 +856,7 @@ fn a_traced_release_stops_at_a_checksum_its_loader_rejects() {
     // With a matching checksum the same release is interpreted.
     s.checksum = true;
     let p = run(&build(&s), Some(&img), None).unwrap();
-    assert_eq!(p.integrity.status, "candidate_match");
+    assert_eq!(p.integrity.status, "verified");
     assert!(!p.fields.is_empty());
 }
 
@@ -882,12 +885,13 @@ fn a_list_that_contradicts_the_validated_binding_is_refused() {
     assert!(
         ev.contradictions
             .iter()
-            .any(|c| c.contains("validated binding puts Setup")),
+            .any(|c| c.contains("size binding puts Setup")),
         "{:?}",
         ev.contradictions
     );
     assert!(p.records.iter().all(|r| r.variable.is_none()));
-    assert_eq!(rec(&p, "r0").mapping, "confirmed");
+    // The two sources disagree, so nothing is confirmed: two stores share Setup's size.
+    assert_eq!(rec(&p, "r0").mapping, "ambiguous");
 }
 
 #[test]
@@ -992,6 +996,7 @@ fn run_with_baseline(
     let bios = BiosRef {
         image: img,
         profiles_supported: false,
+        schema: None,
     };
     analyze_with_baseline_on(
         profile,
@@ -1257,6 +1262,7 @@ fn cross(
     let r = |image| BiosRef {
         image,
         profiles_supported: false,
+        schema: None,
     };
     analyze_with_baseline_on(
         main.1,
@@ -1455,4 +1461,145 @@ fn the_same_image_digest_keeps_the_same_image_mode() {
     let f = field(&p, "Setup switch");
     assert_eq!(f.differs_from_baseline, Some(true));
     assert_eq!(f.baseline_match.as_deref(), Some("key"));
+}
+
+#[test]
+fn an_untraced_board_with_the_known_shape_and_unknown_checksum_is_still_readable() {
+    let img = image("7E26", "AMSI", "1A10", standard_formsets(0));
+    let mut spec = Spec::known("E7E26AMSI", "1A10", standard_records());
+    spec.checksum = false;
+    let p = run(&build(&spec), Some(&img), None).unwrap();
+    assert_eq!(p.integrity.status, "unknown");
+    assert!(
+        p.status_reasons
+            .iter()
+            .any(|r| r.contains("Integrity not established"))
+    );
+    assert_eq!(rec(&p, "r0").mapping, "inferred");
+    assert!(!p.fields.is_empty());
+}
+
+#[test]
+fn another_board_decodes_each_store_against_its_own_bios_defaults() {
+    let mut sets = standard_formsets(0);
+    let mut setup = vec![0; 40];
+    setup[2] = 1;
+    let mut cpu = vec![0; 24];
+    cpu[0] = 0;
+    let mut pch = vec![0; 9];
+    pch[4..6].copy_from_slice(&0x1234u16.to_le_bytes());
+    sets[0].defaults.insert("Setup".into(), setup);
+    sets[0].defaults.insert("CpuSetup".into(), cpu);
+    sets[0].defaults.insert("PchSetup".into(), pch);
+    let img = image("7E26", "AMSI", "1A10", sets);
+    assert!(!img.platform.profiles_supported);
+    let bytes = build(&Spec::known("E7E26AMSI", "1A10", standard_records()));
+    let p = run(&bytes, Some(&img), None).unwrap();
+    assert_eq!(field(&p, "Setup switch").default_raw, Some(RawInt::new(1)));
+    assert_eq!(field(&p, "Cpu switch").default_raw, Some(RawInt::new(0)));
+    assert_eq!(
+        field(&p, "Pch number").default_raw,
+        Some(RawInt::new(0x1234))
+    );
+    assert_eq!(field(&p, "Pch number").raw, Some(RawInt::new(0x1234)));
+    assert_eq!(field(&p, "Setup switch").differs_from_default, Some(false));
+    assert_eq!(field(&p, "Cpu switch").differs_from_default, Some(true));
+    assert_eq!(field(&p, "Pch number").differs_from_default, Some(false));
+    assert_eq!(p.capabilities, ExperimentalCapabilities::READ_ONLY);
+}
+
+#[test]
+fn legacy_pair_reports_missing_record_size_as_unsupported_layout() {
+    use crate::engine::Session;
+    use std::sync::Arc;
+
+    let img = image("7D91", "IMS", "HJ0", standard_formsets(0));
+    let fs = &img.formsets[0];
+    let mut platform = img.platform.clone();
+    platform.profiles_supported = true;
+    let schema = crate::firmware::BiosSchema {
+        sha256: img.sha256.clone(),
+        size: img.size,
+        identity: img.identity.clone(),
+        setup_module: fs.module.clone(),
+        stores: fs.stores.clone(),
+        questions: fs.questions.clone(),
+        fingerprint: String::new(),
+        diagnostics: Vec::new(),
+        menus: Default::default(),
+        std_defaults: None,
+        std_defaults_note: String::new(),
+        platform,
+    };
+    let mut records = standard_records();
+    records[2].payload.push(0);
+    let bytes = build(&Spec::known("E7D91IMS", "HJ0", records));
+    let err = Session::pair(Arc::new(schema), bytes).unwrap_err();
+    assert!(
+        matches!(err, Error::Unsupported(ref message) if message.contains("CpuSetup size 24")),
+        "{err}"
+    );
+}
+
+#[test]
+fn reviewed_composite_requires_every_generic_component_and_default() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/private");
+    let bios_path = root.join("bios/E7D91IMS.HJ0");
+    if !bios_path.exists() {
+        return;
+    }
+    let analysis = crate::io::load_analysis(&bios_path).unwrap();
+    let bytes = std::fs::read(root.join("profiles/OC-Just-Minus-100.ocb")).unwrap();
+    let bios = BiosRef::new(&analysis.image, analysis.schema.as_ref().ok());
+    let mut payload = analyze_profile(&bytes, Some(bios), &AnalyzeOptions::default())
+        .unwrap()
+        .payload;
+    let reviewed = payload
+        .fields
+        .iter()
+        .find_map(|f| {
+            f.reviewed
+                .as_ref()
+                .filter(|r| r.setting_id == "cpu.core.voltage_offset")
+        })
+        .unwrap()
+        .clone();
+    assert_eq!(reviewed.components.len(), 2);
+    let sign = &reviewed.components[0];
+    let is_sign = |f: &ExperimentalField| {
+        f.span == Some(sign.span)
+            && f.store_offset == sign.store_offset
+            && f.width_bits == sign.width_bits
+    };
+    for f in &mut payload.fields {
+        f.reviewed = None;
+    }
+    payload.fields.retain(|f| !is_sign(f));
+    enrich_reviewed(&bytes, bios, Some(0), &payload.stores, &mut payload.fields);
+    assert!(!payload.fields.iter().any(|f| {
+        f.reviewed
+            .as_ref()
+            .is_some_and(|r| r.setting_id == reviewed.setting_id)
+    }));
+    let mut payload = analyze_profile(&bytes, Some(bios), &AnalyzeOptions::default())
+        .unwrap()
+        .payload;
+    for f in &mut payload.fields {
+        f.reviewed = None;
+        if is_sign(f) {
+            f.default_raw = None;
+        }
+    }
+    enrich_reviewed(&bytes, bios, Some(0), &payload.stores, &mut payload.fields);
+    let reading = payload
+        .fields
+        .iter()
+        .find_map(|f| {
+            f.reviewed
+                .as_ref()
+                .filter(|r| r.setting_id == reviewed.setting_id)
+        })
+        .unwrap();
+    assert!(reading.default_value.is_none());
+    assert!(reading.differs_from_default.is_none());
 }

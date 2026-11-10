@@ -1,0 +1,9 @@
+.note {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0;
+  padding: var(--s2) var(--s4);
+  border-bottom: 1px solid var(--rule);
+}

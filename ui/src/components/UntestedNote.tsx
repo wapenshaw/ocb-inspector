@@ -6,7 +6,7 @@ import { Status } from "./Status";
 import s from "./UntestedNote.module.css";
 
 export const UNTESTED_TEXT =
-  "No profile from this board has been examined: the layout is assumed from MS-7D91. Check a few values against your BIOS screens.";
+  "No profile from this board has been examined: the layout is assumed from the boards examined so far. Check a few values against your BIOS screens.";
 
 const isUntested = (bios: Pick<BiosSummary, "platform"> | null | undefined): boolean =>
   bios?.platform?.profile_evidence === "untested";

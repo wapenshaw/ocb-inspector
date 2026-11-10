@@ -619,7 +619,21 @@ export interface StoreInfo {
   field_count: number;
 }
 
+/** Optional recipe interpretation, separate from record mapping and integrity assurance. */
+export interface ReviewedInterpretation {
+  setting_id: string;
+  label: string;
+  value: Value;
+  default_value: Value | null;
+  baseline_value: Value | null;
+  differs_from_default: boolean | null;
+  evidence: string[];
+  board_evidence?: "examined" | "untested";
+  components: { store: string; store_offset: number; width_bits: number; span: Range }[];
+}
+
 export interface ExperimentalField {
+  reviewed?: ReviewedInterpretation | null;
   key: string;
   store: string;
   record: string;

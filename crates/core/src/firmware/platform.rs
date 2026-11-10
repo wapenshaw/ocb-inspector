@@ -267,13 +267,7 @@ pub fn describe(identity: &BiosIdentity, vendor: Vendor) -> (Platform, Vec<Strin
         Vendor::Intel if short_id => (
             PARSER_INTEL,
             true,
-            if identity.board == "7D91" {
-                "OC profiles saved by this BIOS can be opened.".to_string()
-            } else {
-                "OC profiles can be opened if their layout matches the MS-7D91 profiles examined so far; \
-                 pairing checks reject any mismatch."
-                    .to_string()
-            },
+            "OC profiles saved by this BIOS can be opened.".to_string(),
         ),
         Vendor::Intel => (
             PARSER_INTEL,

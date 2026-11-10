@@ -1,5 +1,7 @@
+import { createRef } from "react";
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { analysisFixture } from "./analysisFixture";
 import { FORMAT_BIOS_SHA, profileFormatFixture } from "./profileFormatFixture";
 
 const pickFile = vi.fn();
@@ -16,32 +18,39 @@ vi.mock("../api", async (original) => ({
   api: { analyzeProfile, saveAnalysis, profileFormat, saveProfileFormat, openPage },
 }));
 const { Analyze } = await import("../components/Analyze");
+import type { AnalyzeHandle } from "../components/Analyze";
 
 beforeEach(() => {
   for (const f of [pickFile, pickSave, analyzeProfile, saveAnalysis, profileFormat, saveProfileFormat, openPage]) f.mockReset();
 });
 
+const onClose = vi.fn();
+
+// The fallback view is opened with a profile; the format is then one click away.
 async function openFormat() {
-  render(<Analyze />);
-  pickFile.mockResolvedValueOnce("C:/bios/E7D91IMS.HJ0");
-  await userEvent.click(screen.getByRole("button", { name: /Add BIOS image/ }));
-  await act(async () => {});
-  await userEvent.click(screen.getByRole("button", { name: "Show profile format" }));
+  const handle = createRef<AnalyzeHandle>();
+  render(<Analyze ref={handle} onClose={onClose} />);
+  analyzeProfile.mockResolvedValue(analysisFixture({ set: 0 }));
+  await act(async () => handle.current?.open("C:/bios/E7D91IMS.HJ0", "a.ocb"));
+  await userEvent.click(screen.getByRole("button", { name: "Profile format" }));
   await act(async () => {});
 }
 
 describe("Profile format (BIOS only)", () => {
-  it("is offered only once a BIOS is chosen, and reads it without any profile", async () => {
+  it("is offered once a BIOS is given, and reads it without opening the profile again", async () => {
     profileFormat.mockResolvedValue(profileFormatFixture());
-    render(<Analyze />);
-    expect(screen.queryByRole("button", { name: "Show profile format" })).toBeNull();
-    pickFile.mockResolvedValueOnce("C:/bios/E7D91IMS.HJ0");
-    await userEvent.click(screen.getByRole("button", { name: /Add BIOS image/ }));
-    await act(async () => {});
-    await userEvent.click(screen.getByRole("button", { name: "Show profile format" }));
-    await act(async () => {});
+    await openFormat();
     expect(profileFormat).toHaveBeenCalledWith("C:/bios/E7D91IMS.HJ0", null);
-    expect(analyzeProfile).not.toHaveBeenCalled();
+    expect(analyzeProfile).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Change BIOS" })).toBeNull();
+  });
+
+  it("is not offered when no BIOS was given", async () => {
+    const handle = createRef<AnalyzeHandle>();
+    render(<Analyze ref={handle} onClose={onClose} />);
+    analyzeProfile.mockResolvedValue(analysisFixture({ bios: false }));
+    await act(async () => handle.current?.open("", "a.ocb"));
+    expect(screen.queryByRole("button", { name: "Profile format" })).toBeNull();
   });
 
   it("labels each part of the layout with what it rests on, and marks skipped positions on a traced release", async () => {
@@ -90,10 +99,10 @@ describe("Profile format (BIOS only)", () => {
     expect(screen.getByText(/Saved to/).textContent).toContain("C:/out/f.json");
   });
 
-  it("goes back to analyzing a profile", async () => {
+  it("goes back to the results", async () => {
     profileFormat.mockResolvedValue(profileFormatFixture());
     await openFormat();
-    await userEvent.click(screen.getByRole("button", { name: "Analyze a profile" }));
-    expect(screen.getByRole("button", { name: /Choose OC profile/ })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Back to results" }));
+    expect(screen.getByRole("radio", { name: "Settings" })).toBeTruthy();
   });
 });

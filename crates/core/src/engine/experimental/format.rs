@@ -128,7 +128,7 @@ pub fn profile_format(
         fact(
             "trailer",
             format!(
-                "A $OCI$ trailer is expected: {} holds that signature. Its contents were traced only on MS-7D91 (board, revision, CPU brand, save time, six numbers), not here",
+                "A $OCI$ trailer is expected: {} holds that signature. Its contents were traced only on another board (board, revision, CPU brand, save time, six numbers), not here",
                 oci_in.join(", ")
             ),
             "expected",
@@ -201,8 +201,9 @@ pub fn profile_format(
         Err(e) => (None, Some(e)),
     };
 
-    let mut limitations =
-        vec!["Exported profiles have been checked against this layout only on MS-7D91".to_string()];
+    let mut limitations = vec![
+        "Exported profiles have been checked against this layout on one board only".to_string(),
+    ];
     if !traced {
         limitations.push(
             "This release's profile code was not traced: parts marked expected follow the traced releases, and which positions are saved is unknown".into(),

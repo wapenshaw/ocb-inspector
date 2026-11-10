@@ -229,14 +229,14 @@ export const FIELD_STATE_LABEL:Record<FieldState, string> = {
 };
 
 export const MAPPING_LABEL: Record<MappingState, string> = {
-  confirmed: "Confirmed mapping",
+  confirmed: "Cross-checked mapping",
   inferred: "Inferred mapping",
   ambiguous: "Ambiguous mapping",
   unmapped: "Not mapped",
 };
 
 export const MAPPING_TONE: Record<MappingState, Tone> = {
-  confirmed: "ok",
+  confirmed: "neutral",
   inferred: "attention",
   ambiguous: "attention",
   unmapped: "neutral",
@@ -264,7 +264,7 @@ export const IDENTITY_TONE: Record<IdentityStatus, Tone> = {
 
 /** Deliberately no "verified" wording: a consistent checksum is not proof that the BIOS accepts the file. */
 export const INTEGRITY_LABEL: Record<IntegrityStatus, string> = {
-  verified: "Consistent with a known rule",
+  verified: "Checksum valid",
   candidate_match: "Matches a candidate rule only",
   failed: "Checksum does not match",
   unknown: "Not established",

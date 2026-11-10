@@ -1,0 +1,18 @@
+.reading {
+  margin-top: 0.3rem;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.label,
+.value {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.value {
+  margin-top: 0.1rem;
+}

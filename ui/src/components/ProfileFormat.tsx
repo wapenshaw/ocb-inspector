@@ -36,7 +36,15 @@ interface Shown {
   report: Report<ProfileFormatPayload>;
 }
 
-export function ProfileFormat({ bios, onChooseBios, onClose }: { bios: string; onChooseBios: () => void; onClose: () => void }) {
+interface ProfileFormatProps {
+  bios: string;
+  /** Without it the BIOS is fixed and no "Change BIOS" button is shown. */
+  onChooseBios?: () => void;
+  onClose: () => void;
+  closeText?: string;
+}
+
+export function ProfileFormat({ bios, onChooseBios, onClose, closeText = "Analyze a profile" }: ProfileFormatProps) {
   const [set, setSet] = useState<number | null>(null);
   const [shown, setShown] = useState<Shown | null>(null);
   const [failure, setFailure] = useState<{ title: string; message: string } | null>(null);
@@ -95,7 +103,7 @@ export function ProfileFormat({ bios, onChooseBios, onClose }: { bios: string; o
       <div className={`strip ${a.inputs}`} role="group" aria-label="BIOS image read">
         <span className="quiet">BIOS</span>
         <span className={`${a.name} mono`} title={bios}>{p?.bios.bios_id ?? fileName(bios)}</span>
-        <button className="btn ghost" onClick={onChooseBios}>Change BIOS</button>
+        {onChooseBios && <button className="btn ghost" onClick={onChooseBios}>Change BIOS</button>}
         {sets.length > 1 && (
           <label className={a.setpick}>
             Firmware set
@@ -109,7 +117,7 @@ export function ProfileFormat({ bios, onChooseBios, onClose }: { bios: string; o
           </label>
         )}
         <span className="spacer" />
-        <button className="btn ghost" onClick={onClose}>Analyze a profile</button>
+        <button className="btn ghost" onClick={onClose}>{closeText}</button>
         <button
           className="btn primary"
           disabled={!canSave}
