@@ -104,12 +104,58 @@ export async function mock<T>(cmd: string, args: Record<string, unknown>): Promi
     case "open_page":
       window.open(String(args.url), "_blank", "noopener");
       return undefined as T;
+    case "analyze_profile":
+      return analyzeMock<T>(args);
+    case "profile_format":
+      return profileFormatMock<T>(args);
+    case "save_profile_format":
+    case "save_analysis":
+      // The preview has no file system: the chosen path is the result.
+      return String(args.out) as T;
     case "migrate_build":
       return { output_path: args.out, report_path: String(args.out).replace(/\.ocb$/, ".manifest.json"), manifest: await fetchJson("manifest") } as T;
     default:
       throw { code: "unsupported", exit_code: 5, message: `${cmd} is not available in the design preview` };
   }
   return fetchJson<T>(name);
+}
+
+// The recorded analyses are git-ignored; without them the preview serves the synthetic fixture
+// (loaded on demand, so it stays out of the main bundle).
+async function analyzeMock<T>(args: Record<string, unknown>): Promise<T> {
+  const profile = fileName(args.profile as string);
+  const bios = args.bios ? fileName(args.bios as string) : "";
+  const base = `/mock/analyze-${profile}${bios ? `-${bios}` : ""}`;
+  // A recording made with --baseline carries a -baseline-<name> suffix, and with --baseline-bios an
+  // -on-<bios> suffix after that; without one the plain recording is used.
+  const baseName = bios && args.baseline ? `${base}-baseline-${fileName(args.baseline as string)}` : "";
+  const names = baseName
+    ? args.baselineBios
+      ? [`${baseName}-on-${fileName(args.baselineBios as string)}`, baseName, base]
+      : [baseName, base]
+    : [base];
+  for (const n of names) {
+    const r = await fetch(`${n}.json`);
+    // The dev server answers a missing file with its HTML page, so check the type as well.
+    if (r.ok && r.headers.get("content-type")?.includes("json")) return (await r.json()) as T;
+  }
+  const { analysisFixture } = await import("../test/analysisFixture");
+  // A baseline is accepted; the synthetic report annotates against one the same way the engine does.
+  return analysisFixture({
+    bios: !!bios,
+    set: (args.set as number | null) ?? null,
+    baseline: bios && args.baseline ? "applied" : undefined,
+    cross: !!(bios && args.baseline && args.baselineBios),
+  }) as T;
+}
+
+async function profileFormatMock<T>(args: Record<string, unknown>): Promise<T> {
+  const bios = fileName(args.bios as string);
+  const set = (args.set as number | null) ?? 0;
+  const r = await fetch(`/mock/format-${bios}${set ? `-set${set + 1}` : ""}.json`);
+  if (r.ok && r.headers.get("content-type")?.includes("json")) return (await r.json()) as T;
+  const { profileFormatFixture } = await import("../test/profileFormatFixture");
+  return profileFormatFixture() as T;
 }
 
 async function fetchJson<T>(name: string): Promise<T> {

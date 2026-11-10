@@ -4,10 +4,9 @@
 
 use ocb_core::bytes::sha256_hex;
 use ocb_core::contracts::*;
-use ocb_core::engine::{Session, browse, edit, inspect, migrate};
+use ocb_core::engine::{Session, browse, edit, experimental, inspect, migrate};
 use ocb_core::error::Error;
 use ocb_core::firmware::{BiosImage, BiosSchema, Limits, analyze};
-use ocb_core::format::MAX_PROFILE_BYTES;
 use ocb_core::io;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -98,7 +97,7 @@ impl AppState {
             return Ok(p.clone());
         }
         let limits = Limits::default();
-        let bytes = io::read_bounded(Path::new(path), limits.max_bios_bytes)?;
+        let bytes = io::read_bios(Path::new(path), &limits)?;
         let sha = sha256_hex(&bytes);
         if let Some(stamp) = stamp {
             locked(&self.digests)?.insert(stamp, sha.clone());
@@ -117,7 +116,7 @@ impl AppState {
 
     fn session(&self, bios: &str, profile: &str, read: ImageRead) -> Result<Session, Error> {
         let schema = self.parsed(bios, read)?.schema.clone()?;
-        let bytes = io::read_bounded(Path::new(profile), MAX_PROFILE_BYTES)?;
+        let bytes = io::load_profile(Path::new(profile))?;
         Ok(Session::pair(schema, bytes)?.with_paths(Some(bios.into()), Some(profile.into())))
     }
 }
@@ -322,6 +321,195 @@ fn save_plan(plan: Patch, out: String) -> R<String> {
     Ok(out)
 }
 
+fn bios_of(p: &Parsed) -> experimental::BiosRef<'_> {
+    experimental::BiosRef::new(&p.image, p.schema.as_ref().ok())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn analysis_of(
+    state: &AppState,
+    profile: &str,
+    bios: Option<&str>,
+    baseline: Option<&str>,
+    baseline_bios: Option<&str>,
+    baseline_set: Option<usize>,
+    set: Option<usize>,
+    read: ImageRead,
+) -> Result<Report<ExperimentalInspectPayload>, Error> {
+    let bytes = io::load_profile(Path::new(profile))?;
+    let base = baseline
+        .map(|b| io::load_profile(Path::new(b)))
+        .transpose()?;
+    if base.is_some() && bios.is_none() {
+        return Err(Error::Request("a baseline needs a BIOS image".into()));
+    }
+    if (baseline_bios.is_some() || baseline_set.is_some()) && baseline.is_none() {
+        return Err(Error::Request(
+            "a baseline BIOS or set needs a baseline profile".into(),
+        ));
+    }
+    let parsed = bios.map(|b| state.parsed(b, read)).transpose()?;
+    // The baseline's BIOS is often the profile's own: read and hash that file once.
+    let same_file = |a: &str, b: &str| {
+        a == b
+            || std::fs::canonicalize(a)
+                .and_then(|a| std::fs::canonicalize(b).map(|b| a == b))
+                .unwrap_or(false)
+    };
+    let base_parsed = match (baseline_bios, bios) {
+        (Some(b), Some(m)) if same_file(b, m) => parsed.clone(),
+        (Some(b), _) => Some(state.parsed(b, read)?),
+        (None, _) => None,
+    };
+    let opts = experimental::AnalyzeOptions {
+        set,
+        ..Default::default()
+    };
+    let source = base.as_deref().map(|profile| experimental::BaselineSource {
+        profile,
+        bios: base_parsed.as_ref().map(|p| bios_of(p)),
+        set: baseline_set,
+    });
+    experimental::analyze_with_baseline_on(
+        &bytes,
+        parsed.as_ref().map(|p| bios_of(p)),
+        source,
+        &opts,
+    )
+}
+
+/// Experimental, read-only analysis of any profile, with or without the BIOS that saved it.
+/// Display only; nothing it returns can reach a writer.
+#[tauri::command(async)]
+fn analyze_profile(
+    state: tauri::State<'_, AppState>,
+    profile: String,
+    bios: Option<String>,
+    baseline: Option<String>,
+    baseline_bios: Option<String>,
+    baseline_set: Option<usize>,
+    set: Option<usize>,
+) -> R<Report<ExperimentalInspectPayload>> {
+    Ok(analysis_of(
+        &state,
+        &profile,
+        bios.as_deref(),
+        baseline.as_deref(),
+        baseline_bios.as_deref(),
+        baseline_set,
+        set,
+        ImageRead::Cached,
+    )?)
+}
+
+/// Save the analysis the user reviewed as JSON. The engine analyses the files again (reading
+/// them now) and refuses if either changed since: the saved report is always the engine's own,
+/// never content sent by the page.
+#[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
+fn save_analysis(
+    state: tauri::State<'_, AppState>,
+    profile: String,
+    bios: Option<String>,
+    baseline: Option<String>,
+    baseline_bios: Option<String>,
+    baseline_set: Option<usize>,
+    set: Option<usize>,
+    profile_sha256: String,
+    bios_sha256: Option<String>,
+    baseline_sha256: Option<String>,
+    baseline_bios_sha256: Option<String>,
+    shareable: Option<bool>,
+    out: String,
+) -> R<String> {
+    let mut r = analysis_of(
+        &state,
+        &profile,
+        bios.as_deref(),
+        baseline.as_deref(),
+        baseline_bios.as_deref(),
+        baseline_set,
+        set,
+        ImageRead::Fresh,
+    )?;
+    let now = &r.payload.inputs;
+    if now.profile_sha256 != profile_sha256
+        || now.bios.as_ref().map(|b| b.sha256.clone()) != bios_sha256
+        || now.baseline.as_ref().map(|b| b.sha256.clone()) != baseline_sha256
+        || now
+            .baseline
+            .as_ref()
+            .and_then(|b| b.bios.as_ref())
+            .map(|b| b.sha256.clone())
+            != baseline_bios_sha256
+    {
+        return Err(Error::BindingChanged(
+            "a file changed since it was analysed; analyse it again before saving".into(),
+        )
+        .into());
+    }
+    let mut inputs = vec![Path::new(&profile)];
+    if let Some(b) = &bios {
+        inputs.push(Path::new(b));
+    }
+    if let Some(b) = &baseline {
+        inputs.push(Path::new(b));
+    }
+    if let Some(b) = &baseline_bios {
+        inputs.push(Path::new(b));
+    }
+    io::ensure_not_input(Path::new(&out), &inputs)?;
+    if shareable.unwrap_or(false) {
+        experimental::make_shareable(&mut r.payload);
+    }
+    let limits = ocb_core::format::probe::ProbeLimits::default();
+    let json = experimental::to_json_bounded(&r, limits.max_json_bytes)?;
+    io::publish_exclusive(Path::new(&out), &json)?;
+    Ok(out)
+}
+
+/// What a BIOS image says about the OC profiles it writes, without a profile. Display only.
+#[tauri::command(async)]
+fn profile_format(
+    state: tauri::State<'_, AppState>,
+    bios: String,
+    set: Option<usize>,
+) -> R<Report<ProfileFormatPayload>> {
+    let p = state.parsed(&bios, ImageRead::Cached)?;
+    let b = bios_of(&p);
+    Ok(experimental::profile_format(
+        b.image,
+        b.profiles_supported,
+        set,
+    )?)
+}
+
+/// Save the profile format the user reviewed as JSON. The engine reads the image again and
+/// refuses if it changed since: the saved report is always the engine's own.
+#[tauri::command(async)]
+fn save_profile_format(
+    state: tauri::State<'_, AppState>,
+    bios: String,
+    set: Option<usize>,
+    bios_sha256: String,
+    out: String,
+) -> R<String> {
+    let p = state.parsed(&bios, ImageRead::Fresh)?;
+    if p.image.sha256 != bios_sha256 {
+        return Err(Error::BindingChanged(
+            "the BIOS image changed since it was read; open it again before saving".into(),
+        )
+        .into());
+    }
+    let b = bios_of(&p);
+    let r = experimental::profile_format(b.image, b.profiles_supported, set)?;
+    io::ensure_not_input(Path::new(&out), &[Path::new(&bios)])?;
+    let limits = ocb_core::format::probe::ProbeLimits::default();
+    let json = experimental::to_json_bounded(&r, limits.max_json_bytes)?;
+    io::publish_exclusive(Path::new(&out), &json)?;
+    Ok(out)
+}
+
 /// `config/` beside the running executable. The app is portable: everything it reads or writes
 /// for itself (approvals, UI settings, WebView2 data) lives there, nothing in %APPDATA% or
 /// %LOCALAPPDATA%.
@@ -500,6 +688,10 @@ fn main() {
             migrate_plan,
             migrate_build,
             save_plan,
+            analyze_profile,
+            save_analysis,
+            profile_format,
+            save_profile_format,
             settings_load,
             settings_save,
             app_info,

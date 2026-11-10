@@ -1044,3 +1044,417 @@ fn full_compare_finds_the_known_differences() {
             .any(|e| e.label == "High Efficiency Mode" && e.only.as_deref() == Some("right"))
     );
 }
+
+/// The experimental analyzer, on the profiles the validated reader supports, must bind Setup
+/// and CpuSetup to the very records `Session::pair` binds, mark them confirmed, and never
+/// mark any other record confirmed.
+#[test]
+fn experimental_mapping_agrees_with_the_validated_binding() {
+    use ocb_core::engine::experimental::{AnalyzeOptions, BiosRef, analyze_profile};
+    if !have_fixtures() {
+        return;
+    }
+    for rev in ["HI0", "HJ0"] {
+        let a = io::load_analysis(&root().join(format!("bios/E7D91IMS.{rev}"))).expect("bios");
+        let profiles: &[&str] = if rev == "HI0" {
+            &["BeforeUpgrade.ocb"]
+        } else {
+            &[
+                "Base-100mv-NoOC.ocb",
+                "Base_-100_+2P.ocb",
+                "OC-Just-Minus-100.ocb",
+            ]
+        };
+        for name in profiles {
+            let bytes = std::fs::read(root().join(format!("profiles/{name}"))).expect("profile");
+            let s = session(rev, name);
+            let bios = BiosRef {
+                image: &a.image,
+                profiles_supported: true,
+            };
+            let r = analyze_profile(&bytes, Some(bios), &AnalyzeOptions::default())
+                .expect("analysis")
+                .payload;
+            assert_eq!(r.container, "established", "{name}");
+            assert_eq!(r.integrity.status, "verified", "{name}");
+            let bound = |store: &str| {
+                let st = r
+                    .stores
+                    .iter()
+                    .find(|x| x.name == store && x.mapping == "confirmed");
+                let key = st.and_then(|x| x.mapped_record.clone()).expect(store);
+                r.records
+                    .iter()
+                    .find(|x| x.key == key)
+                    .expect("record")
+                    .payload
+                    .start
+            };
+            assert_eq!(bound("Setup"), s.setup.offset, "{name} Setup");
+            assert_eq!(bound("CpuSetup"), s.cpu_setup.offset, "{name} CpuSetup");
+            assert_eq!(r.coverage.records_confirmed, 2, "{name}");
+            assert!(r.fields.iter().all(|f| f.mapping != "confirmed"
+                || f.store.contains(":Setup:")
+                || f.store.contains(":CpuSetup:")));
+
+            // amitse_variable_index/1: the BIOS's own variable list names every record, and
+            // agrees with the reviewed binding and with every isolated size match.
+            assert!(r.records.iter().all(|x| x.variable.is_some()), "{name}");
+            assert_eq!(r.coverage.records_ambiguous, 0, "{name}");
+            let named = |key: &str| {
+                r.records
+                    .iter()
+                    .find(|x| x.key == key)
+                    .and_then(|x| x.variable.as_ref())
+                    .map(|v| v.name.as_str())
+            };
+            assert_eq!(named("r0"), Some("Setup"));
+            assert_eq!(named("r57"), Some("CpuSetup"));
+            for (key, store) in [
+                ("r3", "AMITSESetup"),
+                ("r58", "SetupCpuFeatures"),
+                ("r59", "CpuSetupVolatileData"),
+                ("r60", "SaSetup"),
+                ("r61", "TbtSetupVolatileData"),
+                ("r62", "PchSetup"),
+                ("r64", "MeSetup"),
+                ("r65", "MeSetupStorage"),
+                ("r71", "LpeSetup"),
+                ("r74", "PcieSataSetupVar"),
+                ("r104", "MemoryZSetupData"),
+                ("r107", "SetupVolatileData"),
+            ] {
+                assert_eq!(named(key), Some(store), "{name} {key}");
+                let rec = r.records.iter().find(|x| x.key == key).expect("record");
+                assert_eq!(rec.mapping, "inferred", "{name} {key}");
+            }
+            // The four variables sized at run time are named but not decoded.
+            for key in ["r1", "r12", "r13", "r14"] {
+                let rec = r.records.iter().find(|x| x.key == key).expect("record");
+                assert_eq!(rec.mapping, "unmapped", "{name} {key}");
+                assert!(rec.reason.contains("sized at run time"), "{name} {key}");
+            }
+            // The profile's ids never use the entries the firmware skips.
+            for x in &r.records {
+                assert!(
+                    ![3, 4, 7, 8, 11, 12, 58, 90].contains(&x.id),
+                    "{name} id {}",
+                    x.id
+                );
+            }
+        }
+    }
+}
+
+/// The profile format a BIOS reports without any profile: on each fixture pair, the list
+/// positions it says the traced save writes are exactly the profile's record ids.
+#[test]
+fn the_profile_format_predicts_every_record_id_of_the_real_profiles() {
+    use ocb_core::engine::experimental::profile_format;
+    if !have_fixtures() {
+        return;
+    }
+    for (rev, names) in [
+        ("HI0", &["BeforeUpgrade.ocb"][..]),
+        (
+            "HJ0",
+            &[
+                "Base-100mv-NoOC.ocb",
+                "Base_-100_+2P.ocb",
+                "OC-Just-Minus-100.ocb",
+            ][..],
+        ),
+    ] {
+        let a = io::load_analysis(&root().join(format!("bios/E7D91IMS.{rev}"))).expect("bios");
+        let p = profile_format(&a.image, true, None)
+            .expect("format")
+            .payload;
+        assert!(p.traced, "{rev}");
+        let trailer = p
+            .layout
+            .iter()
+            .find(|f| f.part == "trailer")
+            .expect("trailer");
+        assert_eq!(trailer.basis, "firmware_code", "{rev}");
+        let list = p.variable_list.expect("list");
+        let saved: Vec<u32> = list
+            .entries
+            .iter()
+            .filter(|e| e.saved == "saved")
+            .map(|e| e.index)
+            .collect();
+        assert_eq!(list.entries.len(), 124, "{rev}");
+        assert_eq!(saved.len(), 116, "{rev}");
+        for name in names {
+            let bytes = std::fs::read(root().join(format!("profiles/{name}"))).expect("profile");
+            let f = ocb_core::format::OcbFile::parse(bytes).expect("parse");
+            let ids: Vec<u32> = f.records.iter().map(|r| r.id).collect();
+            assert_eq!(ids, saved, "{rev} {name}");
+        }
+    }
+}
+
+/// Every provisioned image carries the setup browser's variable list (`$SPF`), exactly one per
+/// firmware set, with the entries the profile save code relies on (research survey, 126 images).
+#[test]
+fn every_image_has_one_setup_variable_list_per_firmware_set() {
+    if !have_fixtures() {
+        return;
+    }
+    let lists = std::fs::read_to_string(root().join("../SHA256SUMS")).unwrap()
+        + &std::fs::read_to_string(root().join("../SHA256SUMS.corpus")).unwrap_or_default();
+    let (mut checked, mut with_trailer) = (0, 0);
+    for line in lists.lines() {
+        let (_, name) = line.split_once("  ").unwrap();
+        if name.ends_with(".ocb") || !root().join(name).exists() {
+            continue;
+        }
+        let img = io::load_analysis(&root().join(name)).expect(name).image;
+        assert!(!img.variable_lists.is_empty(), "{name}");
+        for set in 0..img.sets.len().max(1) {
+            let roots: std::collections::BTreeSet<&str> = img
+                .formsets
+                .iter()
+                .filter(|f| f.set == set)
+                .map(|f| {
+                    f.module
+                        .container_path
+                        .split('/')
+                        .next()
+                        .unwrap_or_default()
+                })
+                .collect();
+            let digests: std::collections::BTreeSet<&str> = img
+                .variable_lists
+                .iter()
+                .filter(|l| img.sets.len() <= 1 || roots.contains(l.root.as_str()))
+                .map(|l| l.sha256.as_str())
+                .collect();
+            assert_eq!(digests.len(), 1, "{name} set {set}");
+        }
+        let first = &img.variable_lists[0].entries;
+        assert!(first.len() > 58, "{name}: {} entries", first.len());
+        assert!(
+            first.iter().any(|e| e.name == "Setup" && e.size > 0),
+            "{name}"
+        );
+        assert!(
+            img.profile_modules.has_profile_code_in(None),
+            "{name}: no $MOS$ module"
+        );
+        for set in 0..img.sets.len().max(1) {
+            let f = ocb_core::engine::experimental::profile_format(&img, false, Some(set))
+                .unwrap_or_else(|e| panic!("{name} set {set}: {e}"))
+                .payload;
+            assert!(f.variable_list.is_some(), "{name} set {set}");
+        }
+        if img.profile_modules.has_trailer_in(None) {
+            with_trailer += 1;
+        }
+        checked += 1;
+    }
+    eprintln!("{checked} images checked, {with_trailer} with $OCI$ code");
+    if checked == 126 {
+        // Research survey: 86 images build $OCI$ in OcProfileInfo, 36 (AM5, Intel 800) in the
+        // setup browser; only the four E7C52 releases hold no $OCI$ at all.
+        assert_eq!(with_trailer, 122);
+    }
+}
+
+/// A shareable report holds neither the profile's CPU brand nor its save time, no preview
+/// bytes, and no local path; the settings stay. A baseline from the same BIOS marks the
+/// core voltage offset (100 -> 105 mV) as differing.
+#[test]
+fn experimental_shareable_report_and_baseline_on_real_profiles() {
+    use ocb_core::engine::experimental::{
+        AnalyzeOptions, BaselineSource, BiosRef, analyze_with_baseline_on, make_shareable,
+        to_json_bounded,
+    };
+    if !have_fixtures() {
+        return;
+    }
+    let a = io::load_analysis(&root().join("bios/E7D91IMS.HJ0")).expect("bios");
+    let bios = BiosRef {
+        image: &a.image,
+        profiles_supported: true,
+    };
+    let read = |n: &str| std::fs::read(root().join(format!("profiles/{n}"))).expect("profile");
+    let (main, base) = (read("Base_-100_+2P.ocb"), read("Base-100mv-NoOC.ocb"));
+    let mut r = analyze_with_baseline_on(
+        &main,
+        Some(bios),
+        Some(BaselineSource::same_image(&base)),
+        &AnalyzeOptions::default(),
+    )
+    .expect("analysis")
+    .payload;
+    let b = r.inputs.baseline.as_ref().expect("baseline");
+    assert_eq!(b.status, "applied", "{}", b.reason);
+    let offset = r
+        .fields
+        .iter()
+        .find(|f| f.label == "CPU Core Voltage Offset")
+        .expect("offset field");
+    assert_eq!(offset.differs_from_baseline, Some(true));
+    assert_eq!(
+        (
+            offset.raw.as_ref().map(|x| x.dec.as_str()),
+            offset.baseline_raw.as_ref().map(|x| x.dec.as_str())
+        ),
+        (Some("105"), Some("100"))
+    );
+    assert!(r.coverage.fields_differing_from_baseline.unwrap_or(0) > 0);
+
+    let trailer = r.container_candidates[0].trailers[0].clone();
+    let (cpu, time) = (trailer.strings[2].clone(), trailer.strings[3].clone());
+    assert!(!cpu.is_empty() && time.len() == 14);
+    let before = String::from_utf8(to_json_bounded(&r, 32 << 20).unwrap()).unwrap();
+    assert!(before.contains(&cpu) && before.contains(&time));
+    make_shareable(&mut r);
+    let json = String::from_utf8(to_json_bounded(&r, 32 << 20).unwrap()).unwrap();
+    assert!(!json.contains(&cpu), "CPU brand left in the report");
+    assert!(!json.contains(&time), "save time left in the report");
+    assert!(!json.contains("fixtures"), "a local path is in the report");
+    assert!(r.records.iter().all(|x| x.preview_hex.is_empty()));
+    assert!(r.analysis.shareable && !r.analysis.redactions.is_empty());
+    assert!(r.coverage.fields_decoded > 5000);
+}
+
+/// A profile saved on HI0, with a defaults profile saved on the newer HJ0 as the baseline: the
+/// comparison applies by menu place, and the BIOS pairing is recorded.
+#[test]
+fn experimental_cross_version_baseline_on_real_profiles() {
+    fn r(a: &ocb_core::firmware::Analysis) -> BiosRef<'_> {
+        BiosRef {
+            image: &a.image,
+            profiles_supported: true,
+        }
+    }
+    use ocb_core::engine::experimental::{
+        AnalyzeOptions, BaselineSource, BiosRef, analyze_with_baseline_on,
+    };
+    if !have_fixtures() {
+        return;
+    }
+    let a1 = io::load_analysis(&root().join("bios/E7D91IMS.HI0")).expect("bios");
+    let a2 = io::load_analysis(&root().join("bios/E7D91IMS.HJ0")).expect("bios");
+    let read = |n: &str| std::fs::read(root().join(format!("profiles/{n}"))).expect("profile");
+    let (main, base) = (read("BeforeUpgrade.ocb"), read("Base-100mv-NoOC.ocb"));
+    let p = analyze_with_baseline_on(
+        &main,
+        Some(r(&a1)),
+        Some(BaselineSource {
+            profile: &base,
+            bios: Some(r(&a2)),
+            set: None,
+        }),
+        &AnalyzeOptions::default(),
+    )
+    .expect("analysis")
+    .payload;
+    let b = p.inputs.baseline.as_ref().expect("baseline");
+    assert_eq!(b.status, "applied", "{}", b.reason);
+    assert_eq!(b.mode, "cross_version");
+    assert_eq!(
+        b.bios.as_ref().map(|x| x.bios_id.as_str()),
+        Some("E7D91IMS.HJ0")
+    );
+    assert!(p.coverage.fields_compared_with_baseline.unwrap_or(0) > 1000);
+    assert!(p.coverage.fields_differing_from_baseline.unwrap_or(0) > 0);
+    assert!(p.coverage.fields_not_compared_with_baseline.is_some());
+    // The split counts add up to the differing fields, and the saved baseline is partly off its
+    // own optimized default (values the firmware fills in).
+    let differing = p.coverage.fields_differing_from_baseline.unwrap_or(0);
+    let (at, off, none) = (
+        p.coverage.baseline_differing_at_default.expect("at"),
+        p.coverage.baseline_differing_off_default.expect("off"),
+        p.coverage.baseline_differing_no_default.expect("none"),
+    );
+    assert_eq!(at + off + none, differing);
+    assert!(at > 0 && off > 0, "{at} {off} {none}");
+    assert!(
+        p.fields
+            .iter()
+            .filter(|f| f.differs_from_baseline.is_some())
+            .all(|f| f.baseline_match.as_deref() == Some("menu_place"))
+    );
+}
+
+/// A profile saved by another release says which BIOS to open; the analyzer says the same, and
+/// without a BIOS names the one the profile was saved on.
+#[test]
+fn identity_messages_name_the_bios_to_open() {
+    use ocb_core::engine::experimental::{AnalyzeOptions, BiosRef, analyze_profile};
+    if !have_fixtures() {
+        return;
+    }
+    let bytes = std::fs::read(root().join("profiles/BeforeUpgrade.ocb")).expect("profile");
+    let e = Session::pair(schema("HJ0"), bytes.clone()).expect_err("mismatch");
+    assert!(matches!(e, Error::IdentityMismatch(_)));
+    assert!(
+        e.to_string().contains(
+            "profile was saved by E7D91IMS.HI0 but the BIOS image is E7D91IMS.HJ0. Open the BIOS image E7D91IMS.HI0 (MSI version V17.I) instead."
+        ),
+        "{e}"
+    );
+
+    let a = io::load_analysis(&root().join("bios/E7D91IMS.HJ0")).expect("bios");
+    let bios = BiosRef {
+        image: &a.image,
+        profiles_supported: true,
+    };
+    let r = analyze_profile(&bytes, Some(bios), &AnalyzeOptions::default()).expect("analysis");
+    assert_eq!(r.payload.identity.status, "mismatch");
+    assert!(
+        r.payload
+            .identity
+            .reason
+            .contains("Open the BIOS image E7D91IMS.HI0 (MSI version V17.I) instead.")
+    );
+
+    let r = analyze_profile(&bytes, None, &AnalyzeOptions::default()).expect("analysis");
+    assert_eq!(r.payload.identity.status, "unknown");
+    assert!(
+        r.payload.identity.reason.contains(
+            "profile was saved on E7D91IMS.HI0; no BIOS image supplied. Open that BIOS image (MSI version V17.I) to read the settings."
+        ),
+        "{}",
+        r.payload.identity.reason
+    );
+}
+
+/// Real profiles exist only for MS-7D91: its images are `examined`, another Intel board with the
+/// same layout is `untested`, and an image without profile support carries no marker.
+#[test]
+fn profile_evidence_in_reports() {
+    if !have_fixtures() {
+        return;
+    }
+    let ev = |rel: &str| {
+        let a = io::load_analysis(&root().join(rel)).expect(rel);
+        let info = ocb_core::engine::session::image_summary(&a.image, a.schema.as_ref().ok(), None)
+            .platform
+            .expect("platform");
+        let json = serde_json::to_value(&info).expect("json");
+        (info.profile_evidence, json)
+    };
+    let (e, json) = ev("bios/E7D91IMS.HJ0");
+    assert_eq!(e, Some(ProfileEvidence::Examined));
+    assert_eq!(json["profile_evidence"], "examined");
+
+    let z690 = root().join("bios/PRO-Z690-P-WIFI/E7D33IMS.1M0");
+    if z690.exists() {
+        let (e, json) = ev("bios/PRO-Z690-P-WIFI/E7D33IMS.1M0");
+        assert_eq!(e, Some(ProfileEvidence::Untested));
+        assert_eq!(json["profile_evidence"], "untested");
+    } else {
+        eprintln!("skipping the Z690 check: image not present");
+    }
+
+    let amd = root().join("bios/E7E48AMSI.2A35");
+    if amd.exists() {
+        let (e, json) = ev("bios/E7E48AMSI.2A35");
+        assert_eq!(e, None);
+        assert!(json.get("profile_evidence").is_none());
+    }
+}

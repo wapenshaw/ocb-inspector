@@ -10,6 +10,7 @@ import { menuSort, pageBefore, sectionBefore, pageLabel } from "../lib/menu";
 import { MoreRows, ROW_LIMIT } from "./MoreRows";
 import { PairSetup, usePair } from "./PairSetup";
 import { Status } from "./Status";
+import { UntestedNote } from "./UntestedNote";
 import { ValueText } from "./ValueText";
 import { Icon } from "./Icon";
 import s from "./Compare.module.css";
@@ -108,6 +109,7 @@ export function Compare() {
         <span className="spacer"></span>
         <button className="btn ghost" onClick={reset}>Change files</button>
       </div>
+      <UntestedNote bioses={[a.report.payload.bios, b.report.payload.bios]} />
 
       <div className="fill col">
         <div className={s.tools}>

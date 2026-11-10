@@ -15,6 +15,7 @@ import { MoreRows, ROW_LIMIT } from "./MoreRows";
 import { PairPicker, type PairPickerHandle } from "./PairPicker";
 import { ResultPanel } from "./ResultPanel";
 import { Status, type Tone } from "./Status";
+import { UntestedNote } from "./UntestedNote";
 import { SwapLabel } from "./SwapLabel";
 import { ValueEditor } from "./ValueEditor";
 import { ValueText } from "./ValueText";
@@ -29,6 +30,8 @@ interface InspectProps {
   onBrowsingChange: (v: string | null) => void;
   /** This view is on screen: its keyboard shortcuts are live. */
   active: boolean;
+  /** Open the experimental analysis with these paths (empty strings mean not chosen). */
+  onAnalyze?: (bios: string, profile: string) => void;
 }
 
 type Filter = "all" | "defaults" | "edited";
@@ -120,7 +123,7 @@ function operationsOf(payload: InspectPayload, staged: Record<string, Value>): O
   );
 }
 
-export function Inspect({ browsing, onBrowsingChange, active }: InspectProps) {
+export function Inspect({ browsing, onBrowsingChange, active, onAnalyze }: InspectProps) {
   const app = useApp();
   const [bios, setBios] = useState("");
   const [profile, setProfile] = useState("");
@@ -749,6 +752,7 @@ export function Inspect({ browsing, onBrowsingChange, active }: InspectProps) {
 
   // The open pair stays at the top in every mode (table, review, result), so switching never moves it.
   const strip = p ? (
+    <>
     <div className="strip" role="group" aria-label="Open pair">
       <span className={`mono strong`}>{p.bios.bios_id}</span>
       <Icon name="arrow" />
@@ -765,6 +769,8 @@ export function Inspect({ browsing, onBrowsingChange, active }: InspectProps) {
         Change files
       </button>
     </div>
+    <UntestedNote bioses={[p.bios]} />
+    </>
   ) : null;
 
   let body: ReactNode;
@@ -791,6 +797,7 @@ export function Inspect({ browsing, onBrowsingChange, active }: InspectProps) {
           report={report}
           onReportChange={loaded}
           onBrowse={onBrowsingChange}
+          onAnalyze={onAnalyze}
         />
       </div>
     );

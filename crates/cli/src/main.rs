@@ -4,13 +4,42 @@
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use ocb_core::contracts::{self, Patch, Selection, Value};
-use ocb_core::engine::{Session, browse, edit, inspect, migrate, verify};
+use ocb_core::engine::{Session, browse, edit, experimental, inspect, migrate, verify};
 use ocb_core::error::{Error, Result};
 use ocb_core::io;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// `println!` that ends the process quietly when stdout is closed (`ocbi ... | head`).
+macro_rules! out {
+    ($($t:tt)*) => {
+        out_line(&format!($($t)*))
+    };
+}
+
+fn out_line(s: &str) {
+    write_stdout(&[s.as_bytes(), b"\n"]);
+}
+
+/// Write the parts to stdout under one lock; a failure goes through `stdout_failed`.
+fn write_stdout(parts: &[&[u8]]) {
+    use std::io::Write as _;
+    let mut o = std::io::stdout().lock();
+    if let Err(e) = parts.iter().try_for_each(|p| o.write_all(p)) {
+        stdout_failed(&e);
+    }
+}
+
+/// A closed stdout is a normal end for a reader that wanted less; any other failure keeps the
+/// behaviour of `println!`.
+fn stdout_failed(e: &std::io::Error) -> ! {
+    if e.kind() == std::io::ErrorKind::BrokenPipe {
+        std::process::exit(0);
+    }
+    panic!("failed printing to stdout: {e}");
+}
 
 #[derive(Parser)]
 #[command(
@@ -106,6 +135,18 @@ enum BiosCmd {
         #[command(flatten)]
         common: Common,
     },
+    /// What this BIOS says about the OC profiles it writes (no profile needed): the setup
+    /// browser's variable list (record id = position), the profile code and the file layout.
+    /// Read-only; parts not traced for this release are labelled as expected.
+    ProfileFormat {
+        #[arg(long)]
+        bios: PathBuf,
+        /// Firmware set, for images holding several (32 MiB AM4); 1 is the default.
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..))]
+        set: u16,
+        #[command(flatten)]
+        common: Common,
+    },
 }
 
 #[derive(Args, Clone)]
@@ -145,6 +186,35 @@ enum ProfileCmd {
     Verify {
         #[command(flatten)]
         pair: Pair,
+        #[command(flatten)]
+        common: Common,
+    },
+    /// Experimental, read-only analysis of any profile: file structure, and with the BIOS that
+    /// saved it, settings read through that BIOS's own definitions (inferred mappings marked).
+    /// Exit 0 means the analysis ran, not that the profile is valid. Never writes a profile.
+    Analyze {
+        #[arg(long)]
+        profile: PathBuf,
+        #[arg(long)]
+        bios: Option<PathBuf>,
+        /// Firmware set of the BIOS image (1-based), for images holding several.
+        #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+        set: Option<u16>,
+        /// A profile saved right after "Load Optimized Defaults" on the same BIOS: fields are
+        /// compared with it (needs --bios). A difference means the two files store different bytes.
+        #[arg(long)]
+        baseline: Option<PathBuf>,
+        /// The BIOS image the baseline was saved on, when it is another release of the same board
+        /// (a profile saved after an update, at defaults). Settings then match by menu place and
+        /// name, and a difference can also be a default that changed between releases.
+        #[arg(long)]
+        baseline_bios: Option<PathBuf>,
+        /// Firmware set of the baseline's BIOS image (1-based).
+        #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+        baseline_set: Option<u16>,
+        /// Omit the CPU brand, save time and raw byte previews, for posting in public.
+        #[arg(long)]
+        shareable: bool,
         #[command(flatten)]
         common: Common,
     },
@@ -264,7 +334,7 @@ fn main() {
                 let env = serde_json::json!({
                     "kind": "ocb.error", "code": e.code(), "exit_code": e.exit_code(), "message": e.to_string()
                 });
-                println!("{}", serde_json::to_string_pretty(&env).unwrap_or_default());
+                out!("{}", serde_json::to_string_pretty(&env).unwrap_or_default());
             } else {
                 eprintln!("error: {e}");
             }
@@ -276,12 +346,16 @@ fn main() {
 fn wants_json(cmd: &Cmd) -> bool {
     let f = match cmd {
         Cmd::Bios {
-            cmd: BiosCmd::Inspect { common, .. } | BiosCmd::Browse { common, .. },
+            cmd:
+                BiosCmd::Inspect { common, .. }
+                | BiosCmd::Browse { common, .. }
+                | BiosCmd::ProfileFormat { common, .. },
         } => common.format,
         Cmd::Profile { cmd } => match cmd {
             ProfileCmd::Inspect { common, .. }
             | ProfileCmd::Diff { common, .. }
-            | ProfileCmd::Verify { common, .. } => common.format,
+            | ProfileCmd::Verify { common, .. }
+            | ProfileCmd::Analyze { common, .. } => common.format,
             ProfileCmd::Build { format, .. } => *format,
         },
         Cmd::Patch {
@@ -344,9 +418,19 @@ fn emit<T: serde::Serialize>(
     text: impl FnOnce() -> String,
 ) -> Result<()> {
     let json = serde_json::to_string_pretty(doc).map_err(|e| Error::Internal(e.to_string()))?;
+    emit_json(format!("{json}\n").into_bytes(), common, inputs, text)
+}
+
+/// Emit an already serialized document (ends with a newline).
+fn emit_json(
+    json: Vec<u8>,
+    common: &Common,
+    inputs: &[&Path],
+    text: impl FnOnce() -> String,
+) -> Result<()> {
     if let Some(out) = &common.out {
         io::ensure_not_input(out, inputs)?;
-        io::publish_exclusive(out, format!("{json}\n").as_bytes())?;
+        io::publish_exclusive(out, &json)?;
         if !common.quiet {
             eprintln!("wrote {}", out.display());
         }
@@ -354,9 +438,9 @@ fn emit<T: serde::Serialize>(
             eprintln!("{}", text());
         }
     } else if common.format == Format::Json {
-        println!("{json}");
+        write_stdout(&[&json]);
     } else if !common.quiet {
-        println!("{}", text());
+        out!("{}", text());
     }
     Ok(())
 }
@@ -415,6 +499,22 @@ fn run(cmd: Cmd) -> Result<i32> {
                     })
             });
             emit(&report, &common, &[&bios], || browse_text(&report))?;
+            Ok(0)
+        }
+        Cmd::Bios {
+            cmd: BiosCmd::ProfileFormat { bios, set, common },
+        } => {
+            progress(&format!("parsing {}", bios.display()));
+            let a = io::load_analysis(&bios)?;
+            let b = bios_of(&a);
+            let report = experimental::profile_format(
+                b.image,
+                b.profiles_supported,
+                Some(usize::from(set - 1)),
+            )?;
+            emit(&report, &common, &[&bios], || {
+                profile_format_text(&report.payload)
+            })?;
             Ok(0)
         }
         Cmd::Profile { cmd } => profile_cmd(cmd),
@@ -479,7 +579,7 @@ fn run(cmd: Cmd) -> Result<i32> {
                 "recipes": ocb_core::catalog::RECIPES.iter().map(|r| serde_json::json!({"id": r.id, "group": r.group, "label": r.label,
                     "writability": format!("{:?}", r.writability)})).collect::<Vec<_>>(),
             });
-            println!(
+            out!(
                 "{}",
                 serde_json::to_string_pretty(&caps).unwrap_or_default()
             );
@@ -518,13 +618,19 @@ fn run(cmd: Cmd) -> Result<i32> {
                 ("ocb.report", Some("bios_catalog")) => {
                     schemars::schema_for!(contracts::Report<contracts::CatalogPayload>)
                 }
+                ("ocb.report", Some("experimental_inspect")) => {
+                    schemars::schema_for!(contracts::Report<contracts::ExperimentalInspectPayload>)
+                }
+                ("ocb.report", Some("profile_format")) => {
+                    schemars::schema_for!(contracts::Report<contracts::ProfileFormatPayload>)
+                }
                 _ => {
                     return Err(Error::Request(format!(
                         "unknown document/payload {document} {payload:?}"
                     )));
                 }
             };
-            println!(
+            out!(
                 "{}",
                 serde_json::to_string_pretty(&schema).unwrap_or_default()
             );
@@ -644,8 +750,9 @@ fn browse_text(r: &contracts::Report<contracts::BrowsePayload>) -> String {
 
 fn settings_text(r: &contracts::Report<contracts::InspectPayload>) -> String {
     let p = &r.payload;
+    let note = untested_line(p.bios.platform.as_ref().and_then(|pl| pl.profile_evidence));
     let mut t = format!(
-        "{} ↔ {}  (match verified)\nprofile saved {}  CPU {}\nchecksum {} ({})  writer: {}\n\n",
+        "{} ↔ {}  (match verified)\n{note}profile saved {}  CPU {}\nchecksum {} ({})  writer: {}\n\n",
         p.bios.bios_id,
         p.profile.path.clone().unwrap_or_default(),
         p.profile.saved_at,
@@ -730,7 +837,389 @@ fn settings_text(r: &contracts::Report<contracts::InspectPayload>) -> String {
             p.raw_fields.len()
         );
     }
+    t += &other_settings_text(&p.bios_settings);
     t
+}
+
+/// Lines printed per grouped settings list before the rest is left to the JSON output.
+const LIST_LINES: usize = 200;
+
+/// One row of a grouped list: its menu page, its menu order, a tie-breaker for equal orders, and
+/// what the line is made from.
+type ListRow<'a, T> = (&'a [String], &'a [u32], usize, T);
+
+/// Print `rows` grouped by menu page: pages in the menu order of their first row, rows in menu
+/// order within a page, a `heading` line when the page changes, at most `LIST_LINES` rows, then
+/// how many more were left out.
+fn grouped_lines<T>(
+    t: &mut String,
+    mut rows: Vec<ListRow<'_, T>>,
+    heading: impl Fn(&[String]) -> String,
+    line: impl Fn(&T) -> String,
+) {
+    use std::fmt::Write as _;
+    let mut first: BTreeMap<&[String], &[u32]> = BTreeMap::new();
+    for (path, order, _, _) in &rows {
+        let e = first.entry(path).or_insert(order);
+        *e = (*e).min(order);
+    }
+    rows.sort_by(|a, b| (first[a.0], a.0, a.1, a.2).cmp(&(first[b.0], b.0, b.1, b.2)));
+    let mut page: Option<&[String]> = None;
+    for (path, _, _, item) in rows.iter().take(LIST_LINES) {
+        if page != Some(*path) {
+            let _ = writeln!(t, "{}", heading(path));
+            page = Some(*path);
+        }
+        let _ = writeln!(t, "{}", line(item));
+    }
+    if rows.len() > LIST_LINES {
+        let _ = writeln!(t, "  {} more: use --format json", rows.len() - LIST_LINES);
+    }
+}
+
+/// The `bios_settings` that differ from optimized defaults, by menu page. Empty when the list is
+/// empty (the flag was not given).
+fn other_settings_text(all: &[contracts::DecodedSetting]) -> String {
+    if all.is_empty() {
+        return String::new();
+    }
+    let rows: Vec<ListRow<'_, (&contracts::DecodedSetting, &contracts::MenuLocation)>> = all
+        .iter()
+        .filter(|s| s.differs_from_default == Some(true))
+        .filter_map(|s| {
+            s.menu
+                .as_ref()
+                .map(|m| (m.path.as_slice(), m.order.as_slice(), 0, (s, m)))
+        })
+        .collect();
+    let mut t = format!(
+        "\nOther BIOS settings that differ from optimized defaults ({} of {})\nSome of these are values the firmware fills in itself, not choices made in the BIOS menus.\n",
+        rows.len(),
+        all.len()
+    );
+    grouped_lines(
+        &mut t,
+        rows,
+        |path| {
+            if path.is_empty() {
+                "Setup".to_string()
+            } else {
+                path.join(" › ")
+            }
+        },
+        |(s, m)| {
+            let v = s.value.as_ref().map(Value::display).unwrap_or_default();
+            let v = v.trim_end();
+            let def = s
+                .default_value
+                .as_ref()
+                .map(|d| format!("  [default {}]", d.display().trim_end()))
+                .unwrap_or_default();
+            format!("  * {:<36} {v}{def}", m.prompt)
+        },
+    );
+    t
+}
+
+/// Text form of an experimental analysis: status first, then the findings.
+fn profile_format_text(p: &contracts::ProfileFormatPayload) -> String {
+    use std::fmt::Write as _;
+    let mut t = format!(
+        "PROFILE FORMAT OF {} (read-only; {})
+",
+        p.bios.bios_id,
+        if p.traced {
+            "this release's profile code was traced"
+        } else {
+            "this release's profile code was not traced"
+        }
+    );
+    for f in &p.layout {
+        let _ = writeln!(t, "{:<12} [{}] {}", f.part, f.basis, f.detail);
+    }
+    for m in &p.code {
+        let _ = writeln!(
+            t,
+            "code         {} {}{}",
+            m.name,
+            if m.holds_mos { "$MOS$ " } else { "" },
+            if m.holds_oci { "$OCI$" } else { "" }
+        );
+    }
+    match (&p.variable_list, &p.list_problem) {
+        (Some(l), _) => {
+            let _ = writeln!(
+                t,
+                "variables    {} (list sha256 {})",
+                l.entries.len(),
+                &l.sha256[..16]
+            );
+            for e in &l.entries {
+                let store = e.store_size.map_or("-".to_string(), |s| s.to_string());
+                let _ = writeln!(
+                    t,
+                    "  {:>4}  {:<32} declared {:>5}  store {:>5}  {:>4} fields  {}{}",
+                    e.index,
+                    e.name,
+                    e.declared_size,
+                    store,
+                    e.field_count,
+                    e.saved,
+                    e.note
+                        .as_deref()
+                        .map(|n| format!(" ({n})"))
+                        .unwrap_or_default()
+                );
+            }
+        }
+        (None, problem) => {
+            let _ = writeln!(
+                t,
+                "variables    none: {}",
+                problem.as_deref().unwrap_or("-")
+            );
+        }
+    }
+    for l in &p.limitations {
+        let _ = writeln!(t, "- {l}");
+    }
+    t
+}
+
+fn analysis_text(p: &contracts::ExperimentalInspectPayload) -> String {
+    use std::fmt::Write as _;
+    let mut t = String::from(
+        "EXPERIMENTAL, READ-ONLY INTERPRETATION. Some record mappings are inferred.\n",
+    );
+    let c = &p.coverage;
+    let _ = writeln!(
+        t,
+        "container {}{}",
+        p.container,
+        p.selected_candidate
+            .as_ref()
+            .map(|s| format!(" ({s})"))
+            .unwrap_or_default()
+    );
+    let _ = writeln!(t, "identity  {}: {}", p.identity.status, p.identity.reason);
+    let _ = writeln!(
+        t,
+        "integrity {} (stored {}, computed {})",
+        p.integrity.status,
+        p.integrity.stored.as_deref().unwrap_or("-"),
+        p.integrity.computed.as_deref().unwrap_or("-")
+    );
+    if let Some(b) = &p.inputs.bios {
+        let set = match (b.set, b.sets.len()) {
+            (Some(s), n) if n > 1 => format!(", set {} of {n}", s + 1),
+            (None, n) => format!(", {n} firmware sets: choose one with --set"),
+            _ => String::new(),
+        };
+        let _ = writeln!(t, "bios      {} ({}){set}", b.bios_id, b.family);
+    }
+    let _ = writeln!(
+        t,
+        "records   {} total: {} confirmed, {} inferred, {} ambiguous, {} unmapped",
+        c.records_total,
+        c.records_confirmed,
+        c.records_inferred,
+        c.records_ambiguous,
+        c.records_unmapped
+    );
+    let named = p.records.iter().filter(|r| r.variable.is_some()).count();
+    if named > 0 {
+        let _ = writeln!(
+            t,
+            "names     {named} records named by the BIOS's own variable list (firmware-derived)"
+        );
+    }
+    let _ = writeln!(
+        t,
+        "fields    {} read: {} decoded, {} unknown values, {} unsupported, {} out of bounds",
+        c.fields_total,
+        c.fields_decoded,
+        c.fields_unknown_value,
+        c.fields_unsupported,
+        c.fields_out_of_bounds
+    );
+    let _ = writeln!(
+        t,
+        "bytes     {} of {} interpreted; {} opaque",
+        c.interpreted_bytes, c.profile_bytes, c.opaque_bytes
+    );
+    for r in &p.status_reasons {
+        let _ = writeln!(t, "- {r}");
+    }
+    for s in p.stores.iter().filter(|s| s.mapped_record.is_some()) {
+        let _ = writeln!(
+            t,
+            "  {:<24} {:>6} bytes  {:<9} {}",
+            s.name,
+            s.size,
+            s.mapping,
+            s.mapped_record.as_deref().unwrap_or("")
+        );
+    }
+    if let Some(b) = &p.inputs.baseline {
+        let ids = match (&b.bios, &p.inputs.bios) {
+            (Some(o), Some(m)) if b.status == "applied" => {
+                format!("profile on {}, baseline on {}; ", m.bios_id, o.bios_id)
+            }
+            _ => String::new(),
+        };
+        let _ = writeln!(t, "baseline  {}: {ids}{}", b.status, b.reason);
+        if let (true, Some(n)) = (
+            b.mode == "cross_version",
+            c.fields_not_compared_with_baseline,
+        ) {
+            let _ = writeln!(
+                t,
+                "          {} fields compared, {} differ, {n} not compared",
+                c.fields_compared_with_baseline.unwrap_or(0),
+                c.fields_differing_from_baseline.unwrap_or(0)
+            );
+        }
+    }
+    let visible = |f: &&contracts::ExperimentalField| !f.hidden;
+    if p.inputs
+        .baseline
+        .as_ref()
+        .is_some_and(|b| b.status == "applied")
+    {
+        let base_value = |f: &contracts::ExperimentalField| {
+            f.baseline_label
+                .clone()
+                .or_else(|| f.baseline_raw.as_ref().map(|r| r.dec.clone()))
+        };
+        let differing = |want: Option<bool>| -> Vec<_> {
+            p.fields
+                .iter()
+                .filter(visible)
+                .filter(|f| f.differs_from_baseline == Some(true) && f.baseline_off_default == want)
+                .collect()
+        };
+        if let (Some(at), Some(off), Some(unknown)) = (
+            c.baseline_differing_at_default,
+            c.baseline_differing_off_default,
+            c.baseline_differing_no_default,
+        ) {
+            let _ = writeln!(
+                t,
+                "Of the {} fields that differ from the baseline: {at} with the baseline at its BIOS default, {off} with the baseline off its default, {unknown} with no default to judge by.",
+                at + off + unknown
+            );
+            let _ = writeln!(
+                t,
+                "A baseline value that is off its own BIOS default is often filled in by the firmware (fan type detection, link equalisation), so those are less likely your own choices. This only holds if the baseline was saved with the BIOS at its defaults."
+            );
+        }
+        // The last list (no default to judge by) is left out when it is empty.
+        let lists: [(&str, Option<bool>); 3] = [
+            (
+                "differ from baseline, baseline at its BIOS default (most likely settings made in the BIOS menus)",
+                Some(false),
+            ),
+            (
+                "differ from baseline, baseline itself off its BIOS default (often filled in by the firmware)",
+                Some(true),
+            ),
+            (
+                "differ from baseline, baseline has no BIOS default to judge by",
+                None,
+            ),
+        ];
+        for (title, want) in lists {
+            let rows = differing(want);
+            if want.is_none() && rows.is_empty() {
+                continue;
+            }
+            field_list(&mut t, title, rows, "baseline", base_value);
+        }
+    }
+    let rows: Vec<_> = p
+        .fields
+        .iter()
+        .filter(visible)
+        .filter(|f| f.differs_from_default == Some(true))
+        .collect();
+    field_list(
+        &mut t,
+        "differ from the BIOS optimized default",
+        rows,
+        "default",
+        |f| {
+            f.default_label
+                .clone()
+                .or_else(|| f.default_raw.as_ref().map(|r| r.dec.clone()))
+        },
+    );
+    let judged = p
+        .fields
+        .iter()
+        .filter(|f| matches!(f.state.as_str(), "decoded" | "unknown_value"))
+        .filter(|f| f.default_raw.is_none())
+        .count();
+    let _ = writeln!(
+        t,
+        "{judged} interpreted fields have no optimized default and cannot be judged."
+    );
+    t.push_str("Use --format json for every field, record and piece of evidence.");
+    t
+}
+
+/// Visible settings, grouped by menu path: label, stored value, and the reference value.
+fn field_list(
+    t: &mut String,
+    title: &str,
+    rows: Vec<&contracts::ExperimentalField>,
+    reference: &str,
+    other: impl Fn(&contracts::ExperimentalField) -> Option<String>,
+) {
+    use std::fmt::Write as _;
+    let _ = writeln!(t, "{} visible settings {title}:", rows.len());
+    let rows = rows
+        .into_iter()
+        .map(|f| {
+            (
+                f.menu_path.as_slice(),
+                f.menu_order.as_slice(),
+                usize::from(f.store_offset),
+                f,
+            )
+        })
+        .collect();
+    grouped_lines(
+        t,
+        rows,
+        |path| format!("  {}", path.join(" > ")),
+        |f| {
+            let value = f
+                .value_label
+                .clone()
+                .or_else(|| f.raw.as_ref().map(|r| r.dec.clone()))
+                .unwrap_or_else(|| "?".into());
+            format!(
+                "    {}: {value} ({reference}: {})",
+                f.label,
+                other(f).unwrap_or_else(|| "?".into())
+            )
+        },
+    );
+}
+
+/// The caution line for a pair whose board's profiles were never examined, with its newline.
+fn untested_line(evidence: Option<contracts::ProfileEvidence>) -> String {
+    ocb_core::engine::session::untested_board_note(evidence)
+        .map(|n| format!("{n}\n"))
+        .unwrap_or_default()
+}
+
+/// `untested_line` for a session that has no report carrying the platform (a comparison).
+fn untested_note(s: &Session) -> String {
+    untested_line(ocb_core::engine::session::profile_evidence(
+        &s.schema.platform,
+        &s.schema.identity.board,
+    ))
 }
 
 fn profile_cmd(cmd: ProfileCmd) -> Result<i32> {
@@ -763,15 +1252,19 @@ fn profile_cmd(cmd: ProfileCmd) -> Result<i32> {
                 &common,
                 &[&left_bios, &left_profile, &right_bios, &right_profile],
                 || {
-                    let mut t = String::new();
+                    let mut t = untested_note(&l);
+                    if r.schema.identity.board != l.schema.identity.board {
+                        t += &untested_note(&r);
+                    }
+                    let head = t.len();
                     for s in d.payload.settings.iter().filter(|s| !s.equal) {
                         let f = |v: &Option<Value>| {
                             v.as_ref().map(Value::display).unwrap_or("—".into())
                         };
                         t += &format!("  {:<34} {:>24}  →  {}\n", s.label, f(&s.left), f(&s.right));
                     }
-                    if t.is_empty() {
-                        t = "  reviewed settings are identical\n".into();
+                    if t.len() == head {
+                        t += "  reviewed settings are identical\n";
                     }
                     format!(
                         "{t}{} other named field(s) differ; {} byte span(s) differ",
@@ -782,12 +1275,95 @@ fn profile_cmd(cmd: ProfileCmd) -> Result<i32> {
             )?;
             Ok(0)
         }
+        ProfileCmd::Analyze {
+            profile,
+            bios,
+            set,
+            baseline,
+            baseline_bios,
+            baseline_set,
+            shareable,
+            common,
+        } => {
+            if set.is_some() && bios.is_none() {
+                return Err(Error::Request("--set needs --bios".into()));
+            }
+            if baseline.is_some() && bios.is_none() {
+                return Err(Error::Request("--baseline needs --bios".into()));
+            }
+            if (baseline_bios.is_some() || baseline_set.is_some()) && baseline.is_none() {
+                return Err(Error::Request(
+                    "--baseline-bios and --baseline-set need --baseline".into(),
+                ));
+            }
+            let bytes = io::load_profile(&profile)?;
+            let base_bytes = baseline.as_deref().map(io::load_profile).transpose()?;
+            let analysis = match &bios {
+                Some(b) => {
+                    progress(&format!("parsing {}", b.display()));
+                    Some(io::load_analysis(b)?)
+                }
+                None => None,
+            };
+            let base_analysis = match (&baseline_bios, &bios) {
+                (Some(b), Some(m)) if b != m => {
+                    progress(&format!("parsing {}", b.display()));
+                    Some(io::load_analysis(b)?)
+                }
+                _ => None,
+            };
+            let bios_ref = analysis.as_ref().map(bios_of);
+            // The same file given twice is one image (the engine also treats equal digests so).
+            let base_ref = match (&base_analysis, &baseline_bios) {
+                (Some(a), _) => Some(bios_of(a)),
+                (None, Some(_)) => bios_ref,
+                _ => None,
+            };
+            let opts = experimental::AnalyzeOptions {
+                set: set.map(|s| usize::from(s) - 1),
+                ..Default::default()
+            };
+            let source = base_bytes
+                .as_deref()
+                .map(|profile| experimental::BaselineSource {
+                    profile,
+                    bios: base_ref,
+                    set: baseline_set.map(|s| usize::from(s) - 1),
+                });
+            let mut r = experimental::analyze_with_baseline_on(&bytes, bios_ref, source, &opts)?;
+            if shareable {
+                experimental::make_shareable(&mut r.payload);
+            }
+            let json = experimental::to_json_bounded(&r, opts.limits.max_json_bytes)?;
+            let mut inputs: Vec<&Path> = vec![&profile];
+            if let Some(b) = &bios {
+                inputs.push(b);
+            }
+            if let Some(b) = &baseline {
+                inputs.push(b);
+            }
+            if let Some(b) = &baseline_bios {
+                inputs.push(b);
+            }
+            emit_json(json, &common, &inputs, || analysis_text(&r.payload))?;
+            Ok(0)
+        }
         ProfileCmd::Verify { pair, common } => {
             let s = load_session(&pair.bios, &pair.profile)?;
             let r = verify::verify_profile(&s);
             let ok = r.payload.status == "valid";
             emit(&r, &common, &[&pair.bios, &pair.profile], || {
-                checks_text(&r.payload.checks, &r.payload.status)
+                format!(
+                    "{}{}",
+                    untested_line(
+                        r.payload
+                            .bios
+                            .platform
+                            .as_ref()
+                            .and_then(|pl| pl.profile_evidence)
+                    ),
+                    checks_text(&r.payload.checks, &r.payload.status)
+                )
             })?;
             Ok(if ok { 0 } else { 8 })
         }
@@ -809,6 +1385,10 @@ fn profile_cmd(cmd: ProfileCmd) -> Result<i32> {
             publish(&b, &output, &report, &[&bios, &base_profile], format)
         }
     }
+}
+
+fn bios_of(a: &ocb_core::firmware::Analysis) -> experimental::BiosRef<'_> {
+    experimental::BiosRef::new(&a.image, a.schema.as_ref().ok())
 }
 
 fn checks_text(checks: &[contracts::Check], status: &str) -> String {
@@ -841,17 +1421,17 @@ fn publish(
         inputs,
     )?;
     if format == Format::Json {
-        println!("{manifest}");
+        out!("{manifest}");
     } else {
-        println!(
+        out!(
             "wrote {} ({} bytes, sha256 {})",
             output.display(),
             b.bytes.len(),
             b.manifest.output.sha256
         );
-        println!("wrote {}", report.display());
+        out!("wrote {}", report.display());
         for c in &b.manifest.changes {
-            println!(
+            out!(
                 "  {:?} {}: {} -> {}",
                 c.action,
                 c.label,
@@ -859,7 +1439,7 @@ fn publish(
                 c.to.as_ref().map(Value::display).unwrap_or_default()
             );
         }
-        println!(
+        out!(
             "{}",
             checks_text(&b.manifest.checks, &b.manifest.validation)
         );

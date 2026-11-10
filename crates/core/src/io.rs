@@ -40,9 +40,32 @@ pub fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// The first bytes of a file and its size, for naming a wrong input after a size-limit failure.
+fn peek(path: &Path) -> Option<(Vec<u8>, u64)> {
+    let file = fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let mut head = Vec::new();
+    file.take(8).read_to_end(&mut head).ok()?;
+    Some((head, len))
+}
+
+/// Read a file given as a BIOS image. A file over the limit that is an archive or an OC profile
+/// says so instead of only reporting its size.
+pub fn read_bios(path: &Path, limits: &Limits) -> Result<Vec<u8>> {
+    read_bounded(path, limits.max_bios_bytes).map_err(|e| match e {
+        Error::Limit(m) => {
+            match peek(path).and_then(|(h, _)| crate::firmware::not_a_bios_image(&h)) {
+                Some(why) => Error::Limit(format!("{m}; {why}")),
+                None => Error::Limit(m),
+            }
+        }
+        other => other,
+    })
+}
+
 pub fn load_bios(path: &Path) -> Result<BiosSchema> {
     let limits = Limits::default();
-    let bytes = read_bounded(path, limits.max_bios_bytes)?;
+    let bytes = read_bios(path, &limits)?;
     parse_bios(&bytes, limits)
 }
 
@@ -50,12 +73,20 @@ pub fn load_bios(path: &Path) -> Result<BiosSchema> {
 /// family has one.
 pub fn load_analysis(path: &Path) -> Result<crate::firmware::Analysis> {
     let limits = Limits::default();
-    let bytes = read_bounded(path, limits.max_bios_bytes)?;
+    let bytes = read_bios(path, &limits)?;
     crate::firmware::analyze(&bytes, limits)
 }
 
+/// Read a file given as an OC profile. A file over the limit that is evidently a BIOS image says
+/// so instead of only reporting its size.
 pub fn load_profile(path: &Path) -> Result<Vec<u8>> {
-    read_bounded(path, MAX_PROFILE_BYTES)
+    read_bounded(path, MAX_PROFILE_BYTES).map_err(|e| match e {
+        Error::Limit(m) => match peek(path) {
+            Some((h, len)) => Error::Limit(crate::format::with_swapped_hint(&m, "; ", &h, len)),
+            None => Error::Limit(m),
+        },
+        other => other,
+    })
 }
 
 fn canonical_target(path: &Path) -> Result<PathBuf> {
@@ -192,5 +223,42 @@ mod tests {
         assert!(matches!(read_bounded(&over, 16), Err(Error::Limit(_))));
         let _ = fs::remove_file(at);
         let _ = fs::remove_file(over);
+    }
+    #[test]
+    fn an_oversized_profile_that_is_firmware_says_so_and_stays_a_limit_error() {
+        let big = tmp("bigfw", &vec![0xFF; MAX_PROFILE_BYTES + 1]);
+        let e = load_profile(&big).expect_err("limit");
+        assert!(matches!(e, Error::Limit(_)), "{e}");
+        assert!(e.to_string().contains("looks like a BIOS image"), "{e}");
+        let mut own = vec![0u8; MAX_PROFILE_BYTES + 1];
+        own[..5].copy_from_slice(b"$MOS$");
+        let plain = tmp("bigmos", &own);
+        let e = load_profile(&plain).expect_err("limit");
+        assert!(!e.to_string().contains("BIOS image"), "{e}");
+        let _ = fs::remove_file(big);
+        let _ = fs::remove_file(plain);
+    }
+
+    #[test]
+    fn archives_and_profiles_given_as_the_bios_are_named() {
+        let zip = tmp("zip", b"PK not really");
+        let e = load_bios(&zip).expect_err("zip");
+        assert!(matches!(e, Error::Unsupported(_)), "{e}");
+        assert!(e.to_string().contains("zip archive"), "{e}");
+        let mut big = vec![0u8; Limits::default().max_bios_bytes + 1];
+        big[..4].copy_from_slice(b"PK");
+        let over = tmp("bigzip", &big);
+        let e = load_analysis(&over).expect_err("limit");
+        assert!(matches!(e, Error::Limit(_)), "{e}");
+        assert!(e.to_string().contains("zip archive"), "{e}");
+        let mos = tmp("mos", b"$MOS$E7D91IMS.HJ0");
+        let e = load_bios(&mos).expect_err("profile");
+        assert!(
+            e.to_string().contains("OC profile, not a BIOS image"),
+            "{e}"
+        );
+        for p in [zip, over, mos] {
+            let _ = fs::remove_file(p);
+        }
     }
 }

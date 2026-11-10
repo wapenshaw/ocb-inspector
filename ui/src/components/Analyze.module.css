@@ -1,0 +1,443 @@
+/* Experimental analysis screen. Shared by Analyze and its view components. Fixed bars keep their
+   height; the body takes the rest (App's .view is a flex column). */
+.inputs {
+  overflow: hidden;
+}
+.name {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-weight: 600;
+}
+.hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.right {
+  text-align: right;
+}
+.nowrap {
+  flex: none;
+  white-space: nowrap;
+}
+.inputs :global(.btn) {
+  flex: none;
+}
+.sep {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  background: var(--rule-strong);
+}
+.setpick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.setpick select {
+  max-width: 180px;
+}
+.banner {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s1) var(--s4);
+  border-bottom: 1px solid var(--rule);
+  background: var(--amber-soft);
+  color: var(--ink);
+}
+.banner p {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.banner :global(svg) {
+  flex: none;
+  color: var(--amber);
+}
+.head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4) 0;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+}
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: var(--s2) var(--s4);
+  margin: 0;
+}
+.facts div {
+  min-width: 0;
+}
+.facts dt {
+  color: var(--ink-faint);
+  font-size: var(--fs-small);
+}
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.reasons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  font-size: var(--fs-small);
+}
+.reasons ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.note {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  padding: var(--s1) var(--s3);
+  border-left: 3px solid var(--amber);
+  background: var(--amber-soft);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.note > :first-child {
+  flex: none;
+}
+.note p {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crossnote {
+  flex: none;
+  padding: 0 var(--s4) var(--s2);
+}
+.help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--fs-small);
+}
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+  padding-bottom: var(--s3);
+}
+.body {
+  display: flex;
+  flex-direction: column;
+}
+.waiting {
+  padding: var(--s5) var(--s4);
+}
+.inset {
+  margin: var(--s3) var(--s4);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s2);
+}
+.scrollpad {
+  padding: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.panel h2 {
+  font-size: var(--fs-lead);
+}
+.panel h3 {
+  font-size: var(--fs-body);
+  margin-top: var(--s2);
+}
+.list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.limits {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-quiet);
+  font-size: var(--fs-small);
+}
+.stats {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px var(--s4);
+  margin: 0;
+}
+.stats dt {
+  color: var(--ink-quiet);
+}
+.stats dd {
+  margin: 0;
+  text-align: right;
+}
+.candidate {
+  padding: var(--s2) 0 0;
+  border-top: 1px solid var(--rule);
+}
+.checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.checks li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+/* Settings list: search and filters, then the table, with the chain panel on the right. */
+.split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.listpane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.toolbar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  padding: var(--s3) var(--s4);
+}
+.search {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--ink-faint);
+}
+.search input {
+  width: 220px;
+  padding-left: var(--s3);
+}
+/* A sentence that is also a button: looks like a link, keeps focus and keyboard behaviour. */
+.linkline {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent, inherit);
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.linkline:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.grid th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--s2) var(--s2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule-strong);
+  text-align: left;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--ink-quiet);
+}
+.grid td {
+  padding: 6px var(--s2);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.grid tr[data-row] {
+  cursor: pointer;
+}
+.grid tr[data-row]:hover {
+  background: var(--sunk);
+}
+.grid tr[data-row][aria-selected="true"] {
+  background: var(--accent-soft);
+}
+.grid tr[data-row]:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.pagehead th {
+  padding: var(--s3) var(--s2) var(--s1);
+  color: var(--ink);
+  background: var(--sunk);
+  font-size: var(--fs-small);
+}
+.section th {
+  padding: var(--s1) var(--s2);
+  color: var(--ink-faint);
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
+.label {
+  font-weight: 500;
+}
+.at {
+  display: block;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+.notDecoded {
+  color: var(--amber);
+}
+.reason {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-quiet);
+  font-size: var(--fs-small);
+}
+.stores {
+  margin: 0 0 2px;
+  padding-left: 16px;
+}
+.inspect {
+  flex: none;
+  width: 340px;
+}
+.chain {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.chain > li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: var(--s3);
+  border-left: 2px solid var(--trace);
+  min-width: 0;
+}
+.chain h3 {
+  font-size: var(--fs-small);
+  color: var(--ink-quiet);
+  font-weight: 600;
+}
+.chain p {
+  overflow-wrap: anywhere;
+}
+.preview {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+/* Start screen: which files to choose. */
+.start {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--s6) var(--s4);
+}
+.intro h1 {
+  font-size: var(--fs-title);
+}
+.intro p {
+  margin-top: var(--s2);
+}
+.slots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s4);
+}
+.slot {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 150px;
+  padding: var(--s3) var(--s4);
+  text-align: left;
+  background: transparent;
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+}
+.slot:hover {
+  border-color: var(--accent);
+}
+.slot.filled {
+  border-style: solid;
+  border-color: var(--rule);
+  background: var(--surface);
+}
+.kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-quiet);
+  font-size: var(--fs-small);
+}
+.cta {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: var(--fs-lead);
+}
+.meta {
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;
+}
+.alt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+}
+@media (max-width: 720px) {
+  .slots {
+    grid-template-columns: 1fr;
+  }
+  .split {
+    flex-direction: column;
+  }
+  .inspect {
+    width: auto;
+    max-height: 45%;
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+  }
+}

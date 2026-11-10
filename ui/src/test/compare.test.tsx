@@ -1,6 +1,7 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { BiosSummary, DiffPayload, InspectPayload, Report } from "../api/types";
+import { UNTESTED_TEXT } from "../components/UntestedNote";
 
 const pickFile = vi.fn();
 const biosSummary = vi.fn();
@@ -58,5 +59,38 @@ describe("Compare", () => {
 
     await act(async () => newer.resolve(diffOf(222)));
     expect(await screen.findByText(/0 of 222 settings differ/)).toBeInTheDocument();
+  });
+});
+
+describe("Compare: untested board note", () => {
+  const withEvidence = (id: string, evidence?: "examined" | "untested") =>
+    ({
+      payload: {
+        bios: { bios_id: id, revision: id, ...(evidence ? { platform: { profile_evidence: evidence } } : {}) },
+        profile: { saved_at: "20261001120000", cpu_brand: "Test CPU" },
+      },
+    }) as unknown as Report<InspectPayload>;
+
+  async function open(a?: "examined" | "untested", b?: "examined" | "untested") {
+    pickFile.mockReset();
+    biosSummary.mockImplementation(async (id: string) => summary(id));
+    inspect.mockImplementation(async (id: string) => withEvidence(id, id === "A.BIN" ? a : b));
+    diff.mockResolvedValue(diffOf(1));
+    render(<Compare />);
+    await choose("First profile", /BIOS image/, "A.BIN");
+    await choose("First profile", /OC profile/, "a.ocb");
+    await choose("Second profile", /BIOS image/, "B.BIN");
+    await choose("Second profile", /OC profile/, "b.ocb");
+    await screen.findByRole("group", { name: "Profiles compared" });
+  }
+
+  it("shows once when either BIOS is untested", async () => {
+    await open("examined", "untested");
+    expect(screen.getAllByText(UNTESTED_TEXT)).toHaveLength(1);
+  });
+
+  it("shows nothing for examined boards or an absent field", async () => {
+    await open("examined", undefined);
+    expect(screen.queryByText(UNTESTED_TEXT)).not.toBeInTheDocument();
   });
 });

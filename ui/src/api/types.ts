@@ -82,6 +82,8 @@ export interface PlatformInfo {
   version: string;
   parser: string;
   profiles_note: string;
+  /** "untested": no profile from this board has been examined (layout assumed). Absent when profiles are not supported. */
+  profile_evidence?: "examined" | "untested";
 }
 
 /** A BIOS opened on its own: every setting its menus define. */
@@ -438,4 +440,353 @@ export interface SettingsChange {
   theme?: string;
   update_check?: boolean;
   writing?: boolean;
+}
+
+// ---------------------------------------------- experimental_inspect (read-only analysis)
+// Mirrors `contracts.rs`. Every range is [start, end). Integers that can exceed 2^53 - 1 are
+// RawInt strings, never JSON numbers.
+
+export interface Range {
+  start: number;
+  end: number;
+}
+
+export interface RawInt {
+  dec: string;
+  hex: string;
+}
+
+export type ContainerState = "established" | "candidate" | "unrecognized";
+export type IdentityStatus = "match" | "mismatch" | "unknown" | "conflicting";
+export type IntegrityStatus = "verified" | "candidate_match" | "failed" | "unknown";
+export type MappingState = "confirmed" | "inferred" | "ambiguous" | "unmapped";
+export type FieldState = "decoded" | "unknown_value" | "unsupported_encoding" | "out_of_bounds";
+
+export interface AnalysisInfo {
+  analyzer: string;
+  version: string;
+  mode: "experimental_read_only";
+  rules: string[];
+  completion: string;
+  /** Set on a shareable report: personal strings and raw byte previews were removed. */
+  shareable?: boolean;
+  /** What a shareable report omitted. */
+  redactions?: string[];
+}
+
+export interface BiosInput {
+  sha256: string;
+  size: number;
+  bios_id: string;
+  /** Firmware set analysed; null when the image has several and none was chosen. */
+  set: number | null;
+  /** Labels of the image's firmware sets (empty when it has one). */
+  sets: string[];
+  family: string;
+  /** Whether the validated profile reader supports this image. */
+  profiles_supported: boolean;
+}
+
+export interface AnalysisInputs {
+  profile_sha256: string;
+  profile_size: number;
+  bios: BiosInput | null;
+  /** The baseline profile supplied for comparison; absent without one. */
+  baseline?: BaselineInput;
+}
+
+export interface BaselineInput {
+  sha256: string;
+  size: number;
+  /** "blocked": the baseline was not usable and no field is annotated. */
+  status: "applied" | "blocked";
+  reason: string;
+  /**
+   * "same_image": saved on the same BIOS image and set, matched by key, compared by raw bytes.
+   * "cross_version": saved on another release of the same board, matched by menu place and name.
+   * Absent in reports recorded before the mode existed (same image).
+   */
+  mode?: "same_image" | "cross_version";
+  /** The BIOS image the baseline was read against (cross_version only). */
+  bios?: BiosInput;
+}
+
+export interface IdentifierObservation {
+  source: "header" | "oci";
+  text: string;
+  spans: Range[];
+  board: string | null;
+  flavor: string | null;
+  revision: string | null;
+}
+
+export interface IdentityFinding {
+  status: IdentityStatus;
+  reason: string;
+  profile_bios_id: string | null;
+  observed: IdentifierObservation[];
+  limitations: string[];
+}
+
+export interface IntegrityFinding {
+  status: IntegrityStatus;
+  rule: string | null;
+  scope: string;
+  checksum_at: number | null;
+  stored: string | null;
+  computed: string | null;
+  limitations: string[];
+}
+
+export interface TrailerInfo {
+  at: number;
+  gap: number;
+  strings: string[];
+  spans: Range[];
+  tail_len: number;
+  timestamp_valid: boolean;
+}
+
+export interface ContainerCandidateInfo {
+  id: string;
+  rule: string;
+  assumptions: string[];
+  header_id: string;
+  header_id_span: Range;
+  checksum_at: number;
+  count_at: number;
+  records_at: number;
+  record_count: number | null;
+  records_span: Range | null;
+  chain_error: string | null;
+  trailers: TrailerInfo[];
+  checks: Check[];
+  eligible: boolean;
+  contradictions: string[];
+  integrity: IntegrityFinding;
+}
+
+export interface RecordInfo {
+  key: string;
+  index: number;
+  id: number;
+  header: Range;
+  payload: Range;
+  size: number;
+  mapping: MappingState;
+  candidate_stores: string[];
+  /** The variable the BIOS's own variable list names for this record id, when that rule applies. */
+  variable: ListedVariableInfo | null;
+  reason: string;
+  evidence: string[];
+  preview_hex: string;
+  preview_truncated: boolean;
+  /** Shareable report: the preview was removed. */
+  preview_omitted?: boolean;
+}
+
+export interface ListedVariableInfo {
+  index: number;
+  guid: string;
+  name: string;
+  /** Size the setup data declares; 0 = none declared. */
+  declared_size: number;
+}
+
+export interface StoreDeclaration {
+  formset_guid: string;
+  formset_title: string;
+  module: string;
+  module_sha256: string;
+  local_id: number;
+}
+
+export interface StoreInfo {
+  key: string;
+  name: string;
+  guid: string;
+  kind: "buffer" | "efi" | "name_value";
+  size: number;
+  set: number;
+  declared_by: StoreDeclaration[];
+  /** "supported", or why this analysis cannot map it. */
+  support: string;
+  candidate_records: string[];
+  mapping: MappingState;
+  mapped_record: string | null;
+  reason: string;
+  evidence: string[];
+  field_count: number;
+}
+
+export interface ExperimentalField {
+  key: string;
+  store: string;
+  record: string;
+  label: string;
+  help: string;
+  menu_path: string[];
+  menu_order: number[];
+  section: string | null;
+  kind: "one_of" | "checkbox" | "numeric";
+  store_offset: number;
+  width_bits: number;
+  span: Range | null;
+  raw: RawInt | null;
+  state: FieldState;
+  value_label: string | null;
+  note: string | null;
+  mapping: MappingState;
+  default_raw: RawInt | null;
+  default_label: string | null;
+  differs_from_default: boolean | null;
+  /** What the baseline stores for this field (applied baseline only). */
+  baseline_raw?: RawInt | null;
+  baseline_label?: string | null;
+  /** The two files store different bytes here; absent when only one side has the field. Not "changed by the user". */
+  differs_from_baseline?: boolean | null;
+  /** How the baseline field was found: "key" (same image) or "menu_place" (cross_version). */
+  baseline_match?: "key" | "menu_place" | null;
+  /**
+   * The baseline's own value here differs from its BIOS's optimized default (rule baseline_firmware_filled/1, display
+   * only). Absent: the baseline field has no default, so nothing is known. Meaningful only for a baseline saved at BIOS defaults.
+   */
+  baseline_off_default?: boolean | null;
+  hidden: boolean;
+  conditional: boolean;
+  callback: boolean;
+  evidence: string[];
+}
+
+export interface Evidence {
+  id: string;
+  kind: "container" | "identity" | "integrity" | "mapping" | "rule";
+  summary: string;
+  /** What the claim rests on. Not a confidence. */
+  basis: "file_structure" | "reviewed_binding" | "firmware_code" | "file_comparison" | "size_only";
+  observations: string[];
+  contradictions: string[];
+  limitations: string[];
+}
+
+export interface Coverage {
+  records_total: number;
+  records_confirmed: number;
+  records_inferred: number;
+  records_ambiguous: number;
+  records_unmapped: number;
+  fields_total: number;
+  fields_decoded: number;
+  fields_unknown_value: number;
+  fields_unsupported: number;
+  fields_out_of_bounds: number;
+  profile_bytes: number;
+  mapped_bytes: number;
+  interpreted_bytes: number;
+  opaque_bytes: number;
+  /** Fields with a value in both the profile and an applied baseline. */
+  fields_compared_with_baseline?: number | null;
+  fields_differing_from_baseline?: number | null;
+  /** Cross-version baseline only: interpreted fields with no usable counterpart in the baseline. */
+  fields_not_compared_with_baseline?: number | null;
+  /** Of the fields differing from the baseline: the baseline at its own BIOS default / off it / without a default. */
+  baseline_differing_at_default?: number | null;
+  baseline_differing_off_default?: number | null;
+  baseline_differing_no_default?: number | null;
+}
+
+export interface Observation {
+  kind: "signature" | "string";
+  span: Range;
+  text: string;
+}
+
+export interface ExperimentalCapabilities {
+  profile_write: false;
+  change_planning: false;
+  migration: false;
+  profile_synthesis: false;
+  analysis_export: boolean;
+}
+
+export interface ExperimentalInspectPayload {
+  analysis: AnalysisInfo;
+  inputs: AnalysisInputs;
+  container: ContainerState;
+  status_reasons: string[];
+  identity: IdentityFinding;
+  integrity: IntegrityFinding;
+  container_candidates: ContainerCandidateInfo[];
+  selected_candidate: string | null;
+  records: RecordInfo[];
+  stores: StoreInfo[];
+  fields: ExperimentalField[];
+  evidence: Evidence[];
+  coverage: Coverage;
+  observations: Observation[];
+  capabilities: ExperimentalCapabilities;
+}
+
+/** What `save_analysis` needs: the inputs and the hashes of the analysis the user saw. */
+export interface AnalysisRequest {
+  profile: string;
+  bios: string | null;
+  set: number | null;
+  /** Profile saved right after "Load Optimized Defaults" on the same BIOS (needs `bios`). */
+  baseline?: string | null;
+  /** The BIOS the baseline was saved on, when it is another release of the same board (needs `baseline`). */
+  baselineBios?: string | null;
+  /** Firmware set of `baselineBios` (0-based). */
+  baselineSet?: number | null;
+}
+
+// ------------------------------------------------- profile_format (BIOS only, read-only)
+
+export type FormatBasis = "firmware_code" | "profiles" | "image_structure" | "expected";
+
+export interface FormatFact {
+  /** Short name of the part: header, checksum, records, skipped, cmos, trailer, profile_code. */
+  part: string;
+  detail: string;
+  basis: FormatBasis;
+}
+
+export interface ProfileCodeModule {
+  name: string;
+  guid: string;
+  sha256: string;
+  holds_mos: boolean;
+  holds_oci: boolean;
+}
+
+export interface ListedEntryInfo {
+  /** Position in the list: the record id a profile from this release uses. */
+  index: number;
+  guid: string;
+  name: string;
+  attributes: number;
+  /** Size the setup data declares; 0 = none declared. */
+  declared_size: number;
+  /** Size of the buffer store the BIOS menus declare for it, when exactly one. */
+  store_size: number | null;
+  field_count: number;
+  saved: "saved" | "skipped" | "unknown";
+  note: string | null;
+}
+
+export interface VariableListInfo {
+  container_path: string;
+  sha256: string;
+  entries: ListedEntryInfo[];
+}
+
+export interface ProfileFormatPayload {
+  bios: BiosInput;
+  /** The release's profile save/load code was traced, or is the same code as a traced release. */
+  traced: boolean;
+  code: ProfileCodeModule[];
+  layout: FormatFact[];
+  variable_list: VariableListInfo | null;
+  list_problem: string | null;
+  limitations: string[];
 }

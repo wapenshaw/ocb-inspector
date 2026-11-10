@@ -1,0 +1,75 @@
+/* Profile format of one BIOS image. Shares Analyze.module.css for the strip, banner, facts and
+   table; this file holds the layout trace, filters and section headings. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  padding: var(--s3) var(--s4) var(--s5);
+}
+.h {
+  margin: 0 0 var(--s2);
+  font-size: var(--fs-body, 14px);
+  font-weight: 600;
+}
+/* The file's parts in order, drawn as one trace with a pad per part. */
+.layout {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-left: 2px solid var(--rule-strong);
+}
+.part {
+  position: relative;
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  gap: var(--s3);
+  align-items: baseline;
+  padding: 6px var(--s2) 6px var(--s3);
+  border-bottom: 1px solid var(--rule);
+}
+.part::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  left: -6px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.part.expected::before {
+  border: 2px solid var(--amber);
+  background: var(--surface);
+}
+.partName {
+  color: var(--ink-quiet);
+}
+.code {
+  margin: var(--s2) 0 0;
+}
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: var(--s2);
+}
+.filters input[type="search"] {
+  min-width: 240px;
+}
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.limits {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-quiet);
+}
+@media (max-width: 720px) {
+  .part {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

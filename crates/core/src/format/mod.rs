@@ -12,6 +12,8 @@
 //!       "$OCI$" metadata block (board, revision, CPU brand, timestamp, opaque u32s)
 //! ```
 
+pub mod probe;
+
 use crate::bytes::{u16_at, u32_at};
 use crate::error::{Error, Result};
 use serde::Serialize;
@@ -25,6 +27,36 @@ pub const CMOS_LEN: usize = 256;
 pub const MAX_PROFILE_BYTES: usize = 16 << 20;
 /// Opaque bytes after the four $OCI$ strings (six u32 values in every fixture).
 pub const OCI_TAIL_LEN: usize = 24;
+/// A file this large that does not start with `$MOS$` is taken to be a BIOS image: real profiles
+/// are tens of kilobytes, BIOS images are megabytes.
+pub const FIRMWARE_MIN_BYTES: u64 = 4 << 20;
+
+/// When a file given as a profile is evidently a BIOS image (a plain size and magic test, no
+/// parsing), the sentence telling the user so. `head` is the start of the file, `len` its size.
+pub fn bios_given_as_profile(head: &[u8], len: u64) -> Option<&'static str> {
+    (len >= FIRMWARE_MIN_BYTES && !head.starts_with(MAGIC)).then_some(
+        "it looks like a BIOS image, not an OC profile; the BIOS and profile files are probably swapped",
+    )
+}
+
+/// `base` followed by `sep` and the `bios_given_as_profile` sentence when the file is evidently a
+/// BIOS image, else `base` alone.
+pub fn with_swapped_hint(base: &str, sep: &str, head: &[u8], len: u64) -> String {
+    match bios_given_as_profile(head, len) {
+        Some(why) => format!("{base}{sep}{why}"),
+        None => base.to_string(),
+    }
+}
+
+/// The size-limit message for a file given as a profile.
+pub fn profile_too_large(head: &[u8], len: u64) -> String {
+    with_swapped_hint(
+        &format!("profile exceeds {MAX_PROFILE_BYTES} bytes"),
+        ": ",
+        head,
+        len,
+    )
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Record {
@@ -58,10 +90,15 @@ pub struct OcbFile {
 
 impl OcbFile {
     pub fn parse(bytes: Vec<u8>) -> Result<Self> {
+        let len = bytes.len() as u64;
         if bytes.len() > MAX_PROFILE_BYTES {
-            return Err(Error::Limit(format!(
-                "profile exceeds {MAX_PROFILE_BYTES} bytes"
-            )));
+            return Err(Error::Limit(profile_too_large(&bytes, len)));
+        }
+        if bios_given_as_profile(&bytes, len).is_some() {
+            return Err(Error::malformed(
+                "OCB",
+                with_swapped_hint("missing $MOS$ header", ": ", &bytes, len),
+            ));
         }
         if bytes.len() < RECORDS_AT || &bytes[..5] != MAGIC {
             return Err(Error::malformed("OCB", "missing $MOS$ header"));
@@ -257,4 +294,35 @@ pub fn spans(offsets: &[usize]) -> Vec<(usize, usize)> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod wrong_input_tests {
+    use super::*;
+
+    #[test]
+    fn a_large_file_without_the_magic_is_called_a_bios_image() {
+        let big = FIRMWARE_MIN_BYTES;
+        assert!(bios_given_as_profile(b"\xFF\xFF\xFF\xFF\xFF", big).is_some());
+        assert!(bios_given_as_profile(b"$MOS$", big).is_none());
+        assert!(bios_given_as_profile(b"\xFF\xFF\xFF\xFF\xFF", big - 1).is_none());
+        assert!(bios_given_as_profile(b"", 40_000).is_none());
+    }
+
+    #[test]
+    fn parse_names_the_swap_for_firmware_sized_input_and_keeps_the_error_kinds() {
+        let e = OcbFile::parse(vec![0xFF; FIRMWARE_MIN_BYTES as usize]).expect_err("firmware");
+        assert!(matches!(e, Error::Malformed { .. }), "{e}");
+        assert!(
+            e.to_string().contains("BIOS image, not an OC profile"),
+            "{e}"
+        );
+        assert!(e.to_string().contains("swapped"), "{e}");
+        let e = OcbFile::parse(vec![0xFF; MAX_PROFILE_BYTES + 1]).expect_err("over the limit");
+        assert!(matches!(e, Error::Limit(_)), "{e}");
+        assert!(e.to_string().contains("looks like a BIOS image"), "{e}");
+        // Small junk keeps the plain message.
+        let e = OcbFile::parse(vec![0xFF; 64]).expect_err("junk");
+        assert!(e.to_string().ends_with("missing $MOS$ header"), "{e}");
+    }
 }

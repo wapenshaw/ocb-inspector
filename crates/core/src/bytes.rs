@@ -3,13 +3,17 @@
 use crate::error::{Error, Result};
 use sha2::{Digest, Sha256};
 
-pub fn sha256_hex(data: &[u8]) -> String {
-    let digest = Sha256::digest(data);
-    let mut s = String::with_capacity(64);
-    for b in digest {
+/// Lower-case hexadecimal text of `data`, two digits per byte, no separator.
+pub fn hex(data: &[u8]) -> String {
+    let mut s = String::with_capacity(data.len() * 2);
+    for b in data {
         s.push_str(&format!("{b:02x}"));
     }
     s
+}
+
+pub fn sha256_hex(data: &[u8]) -> String {
+    hex(&Sha256::digest(data))
 }
 
 pub fn slice<'a>(b: &'a [u8], at: usize, len: usize, what: &'static str) -> Result<&'a [u8]> {
