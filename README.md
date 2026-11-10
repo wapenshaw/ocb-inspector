@@ -23,24 +23,24 @@ changed, you have to find it all again by hand, because MSI gives you no way to 
 your PC and see what's in it.
 
 OCB Inspector is our attempt to change that. Open the old profile together with the BIOS file it
-was saved on, and you see the settings it can map, laid out the way the BIOS menus lay them out,
-with a stock value beside each one where the firmware supplies it. Mapped values that differ
-from those defaults are highlighted. Compare supported profiles from before and after an
-update to see which stored settings differ.
+was saved on, and you see its settings laid out the way the BIOS menus lay them out, with the
+stock value beside each one. The list opens on the settings that are not at their default, so
+you can copy them into the newly flashed BIOS by hand.
 
-Inspect uses the supplied BIOS's definitions to read recognized profiles and compare saved
-values with available firmware defaults. A few profile/BIOS pairs from Intel 400-, 600- and
-700-series boards have been examined. AMD BIOS images have been browsed, but no AMD profiles
-have been tested.
-See [Help wanted](#help-wanted-profiles-from-other-boards) to contribute another pair.
+The stock values and the setting names come from the BIOS file you open, not from a table built
+into the program, so this works for any pair the program can read. A few profile/BIOS pairs from
+Intel 400-, 600- and 700-series boards have been examined so far; no AMD profile has been tested
+(AMD BIOS images can be browsed). A value that is not at its default is not always one you set:
+the firmware fills in some by itself. See [Help wanted](#help-wanted-profiles-from-other-boards)
+to contribute a pair from your board.
 
 <p align="center">
-  <img src="docs/images/inspect.png" alt="A profile open next to its BIOS: the Overclocking page, with the saved value and stock value of each setting, and the P-Core Turbo Ratio Offset at +2 bins">
+  <img src="docs/images/inspect.png" alt="A profile open next to its BIOS: the Overclocking page, with the saved value and default of each setting, and the P-Core Turbo Ratio Offset at +2 bins, not at its default">
 </p>
 
 <p align="center">
   <img src="docs/images/compare.png" width="49%" alt="Two profiles compared across BIOS versions HI0 and HJ0: the CPU settings that differ, such as the core voltage offset">
-  <img src="docs/images/inspect-dark.png" width="49%" alt="Dark mode: Advanced CPU Configuration, with C1E Support selected and its choices listed">
+  <img src="docs/images/inspect-dark.png" width="49%" alt="Dark mode: Advanced CPU Configuration, with C1E Support selected and where it is stored in the profile">
 </p>
 
 <p align="center">
@@ -53,24 +53,27 @@ See [Help wanted](#help-wanted-profiles-from-other-boards) to contribute another
   with each setting's "Load Optimized Defaults" value. Intel 300–800 series, X299, AM4, AM5 and
   TRX40 images open.
 - **Inspect a profile.** Open an `.ocb` profile with the BIOS that saved it and see the settings
-  it can map (over 3,000 on examined Z790 pairs), what the BIOS menus call them, and whether
-  they differ from available optimized defaults.
+  it stores (over 5,000 on the Z790 pairs examined), what the BIOS menus call them, and which
+  are not at the optimized default. A profile saved by another BIOS version is refused, with
+  the version to open instead.
 - **Compare two profiles.** Side by side, even across BIOS versions: settings are matched by
   their place in the menus, so a profile saved before a BIOS update lines up with one saved
   after it.
-- **BIOS-derived Inspect (experimental).** Inspect maps profile records through the supplied
-  BIOS's variable list and setup definitions. It labels inferred mappings and reports partial
-  or blocked results. Compatible reviewed recipes can add units, signed values and Auto
-  interpretations; generic fields keep raw values and the BIOS's labels. Those recipes were
-  checked on one Z790 board and are also applied when compatible on other boards;
-  this does not establish that their meanings were checked on those boards. Raw values,
-  mapping evidence and raw comparisons remain available. Compare and experimental writing
-  use the separate reviewed reader; Inspect enrichment does not widen writing support.
-- **Defaults from your firmware.** Saved values are compared with the supplied BIOS's optimized
-  defaults where available. Missing or conflicting defaults remain explicitly unknown; they
-  are never treated as zero or unchanged. Generic numeric values can be raw storage numbers:
-  sign and units may be encoded in separate settings or vendor logic, so a number alone does
-  not establish a voltage, frequency or signed offset.
+- **Read from your BIOS file.** Inspect finds each profile record through the BIOS's own
+  variable list and setup definitions, and shows values with the BIOS's own labels. Each
+  setting says how it was tied to the profile (cross-checked by two rules, or inferred from
+  one), and records that cannot be tied to a setting are not guessed at. Plain numbers are
+  shown as stored: sign and unit can live in a separate setting, so a number alone is not a
+  voltage or a signed offset.
+- **Recipe readings.** For a small set of CPU settings (voltage offset, power and current
+  limits, ratio offsets) a reviewed recipe adds the unit and sign, such as −100 mV, beside the
+  stored value. The recipes were checked on one Z790 board; on other boards they are applied
+  when the BIOS defines the setting the same way, and are marked "not checked on this board".
+  Compare and the experimental writing use a separate, stricter reader; nothing Inspect shows
+  widens what can be written.
+- **Defaults from your firmware.** The default is the BIOS file's own "Load Optimized Defaults"
+  value. Where the image has none for a setting, or its copies disagree, the default is shown
+  as unknown; it is never treated as zero or as unchanged.
 - **Compare with your own baseline.** The BIOS image's optimized defaults flag dozens of values
   the firmware fills in by itself (DMI lanes, fan types). To see only what differs from a clean
   setup, load optimized defaults in the BIOS, save a profile, and give it to the analysis as the
