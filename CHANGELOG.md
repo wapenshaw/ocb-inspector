@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/wapenshaw/ocb-inspector/compare/v0.4.0...v0.5.0) (2026-11-10)
+
+
+### Features
+
+* inspect profiles using their BIOS definitions ([c6cc2f7](https://github.com/wapenshaw/ocb-inspector/commit/c6cc2f7d6df901f5e26d8fae3cac1bb2f8a4865c))
+
 ## [0.4.0](https://github.com/wapenshaw/ocb-inspector/compare/v0.3.0...v0.4.0) (2026-11-10)
 
 
