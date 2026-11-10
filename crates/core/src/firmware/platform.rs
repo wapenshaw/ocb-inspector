@@ -209,6 +209,27 @@ pub fn version_label(revision: &str) -> String {
     }
 }
 
+/// What to open when a profile was saved by another BIOS than the one supplied: the saved-by id,
+/// with MSI's version label when the id has the usual shape. A sentence, ready to append.
+pub fn open_instead(bios_id: &str) -> String {
+    match super::parse_bios_id(bios_id) {
+        Some((_, _, rev)) => format!(
+            "Open the BIOS image {bios_id} (MSI version {}) instead.",
+            version_label(&rev)
+        ),
+        None => format!("Open the BIOS image {bios_id} instead."),
+    }
+}
+
+/// The sentence for a profile saved by `saved_by` but paired with the image `image_id`,
+/// ending with what to open instead.
+pub fn identity_mismatch(saved_by: &str, image_id: &str) -> String {
+    format!(
+        "profile was saved by {saved_by} but the BIOS image is {image_id}. {}",
+        open_instead(saved_by)
+    )
+}
+
 /// Describe an image whose vendor was established from its structure. Returns notes for
 /// anything that disagrees (table or identifier flavor naming another vendor).
 pub fn describe(identity: &BiosIdentity, vendor: Vendor) -> (Platform, Vec<String>) {
@@ -293,6 +314,22 @@ pub fn describe(identity: &BiosIdentity, vendor: Vendor) -> (Platform, Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_instead_names_the_bios_and_msi_version() {
+        assert_eq!(
+            open_instead("E7D91IMS.HI0"),
+            "Open the BIOS image E7D91IMS.HI0 (MSI version V17.I) instead."
+        );
+        assert_eq!(
+            open_instead("E7E34IMSI.1AF0"),
+            "Open the BIOS image E7E34IMSI.1AF0 (MSI version V1.AF0) instead."
+        );
+        assert_eq!(
+            open_instead("garbage"),
+            "Open the BIOS image garbage instead."
+        );
+    }
 
     #[test]
     fn version_labels_match_release_notes() {

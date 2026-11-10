@@ -4,8 +4,8 @@ use crate::approvals;
 use crate::bytes::sha256_hex;
 use crate::catalog::{ADAPTER_ID, ADAPTER_VERSION};
 use crate::contracts::{
-    Binding, BiosSummary, Capabilities, DefaultsInfo, Diagnostic, PlatformInfo, ProfileSummary,
-    Severity, StoreSpan,
+    Binding, BiosSummary, Capabilities, DefaultsInfo, Diagnostic, PlatformInfo, ProfileEvidence,
+    ProfileSummary, Severity, StoreSpan,
 };
 use crate::error::{Error, Result};
 use crate::firmware::platform::{Platform, Vendor};
@@ -41,10 +41,9 @@ impl Session {
         let mut diagnostics = Vec::new();
 
         if profile.bios_id != id.bios_id {
-            return Err(Error::IdentityMismatch(format!(
-                "profile was saved by {} but the BIOS image is {}",
-                profile.bios_id, id.bios_id
-            )));
+            return Err(Error::IdentityMismatch(
+                crate::firmware::platform::identity_mismatch(&profile.bios_id, &id.bios_id),
+            ));
         }
         let expected_board = format!("E{}{}", id.board, id.flavor);
         if profile.oci.board != expected_board || profile.oci.revision != id.revision {
@@ -265,13 +264,34 @@ pub fn bios_summary(schema: &BiosSchema, path: Option<String>) -> BiosSummary {
             available: schema.std_defaults.is_some(),
             source: schema.std_defaults_note.clone(),
         },
-        platform: Some(platform_info(&schema.platform)),
+        platform: Some(platform_info(&schema.platform, &id.board)),
         profiles_supported: schema.platform.profiles_supported,
     }
 }
 
-pub fn platform_info(p: &Platform) -> PlatformInfo {
+/// Whether profiles from `board` were ever examined. Display only; `None` when profiles are not
+/// supported at all.
+pub fn profile_evidence(p: &Platform, board: &str) -> Option<ProfileEvidence> {
+    p.profiles_supported.then(|| {
+        if crate::catalog::ADAPTER_BOARDS.contains(&board) {
+            ProfileEvidence::Examined
+        } else {
+            ProfileEvidence::Untested
+        }
+    })
+}
+
+/// The one-line caution printed after a verified pair when the board's profiles were never
+/// examined; `None` otherwise.
+pub fn untested_board_note(evidence: Option<ProfileEvidence>) -> Option<&'static str> {
+    (evidence == Some(ProfileEvidence::Untested)).then_some(
+        "note: no profile from this board has been examined; the layout is assumed from MS-7D91. Check a few values against your BIOS screens.",
+    )
+}
+
+pub fn platform_info(p: &Platform, board: &str) -> PlatformInfo {
     PlatformInfo {
+        profile_evidence: profile_evidence(p, board),
         vendor: match p.vendor {
             Vendor::Intel => "intel".into(),
             Vendor::Amd => "amd".into(),
@@ -330,7 +350,72 @@ pub fn image_summary(
                 .any(|f| f.set == 0 && !f.defaults.is_empty()),
             source: img.defaults_note.clone(),
         },
-        platform: Some(platform_info(&img.platform)),
+        platform: Some(platform_info(&img.platform, &id.board)),
         profiles_supported: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::firmware::platform::PARSER_INTEL;
+
+    fn platform(profiles_supported: bool) -> Platform {
+        Platform {
+            vendor: Vendor::Intel,
+            family: "Intel".into(),
+            chipset: None,
+            models: None,
+            version: String::new(),
+            parser: PARSER_INTEL,
+            profiles_supported,
+            profiles_note: String::new(),
+        }
+    }
+
+    #[test]
+    fn profile_evidence_follows_the_reviewed_boards_only() {
+        let p = platform(true);
+        assert_eq!(
+            profile_evidence(&p, "7D91"),
+            Some(ProfileEvidence::Examined)
+        );
+        assert_eq!(
+            profile_evidence(&p, "7D25"),
+            Some(ProfileEvidence::Untested)
+        );
+        assert_eq!(
+            profile_evidence(&p, "7E07"),
+            Some(ProfileEvidence::Untested)
+        );
+        // No profile support, no claim either way.
+        assert_eq!(profile_evidence(&platform(false), "7D91"), None);
+        assert_eq!(profile_evidence(&platform(false), "7D25"), None);
+    }
+
+    #[test]
+    fn the_caution_line_appears_only_for_untested_boards() {
+        assert!(untested_board_note(Some(ProfileEvidence::Untested)).is_some());
+        assert!(untested_board_note(Some(ProfileEvidence::Examined)).is_none());
+        assert!(untested_board_note(None).is_none());
+    }
+
+    #[test]
+    fn the_field_is_omitted_when_absent_and_snake_case_when_present() {
+        let json =
+            |p: &Platform, b: &str| serde_json::to_value(platform_info(p, b)).expect("serialize");
+        assert!(
+            json(&platform(false), "7D91")
+                .get("profile_evidence")
+                .is_none()
+        );
+        assert_eq!(
+            json(&platform(true), "7D91")["profile_evidence"],
+            "examined"
+        );
+        assert_eq!(
+            json(&platform(true), "7D25")["profile_evidence"],
+            "untested"
+        );
     }
 }

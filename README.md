@@ -56,6 +56,26 @@ wanted](#help-wanted-profiles-from-other-boards)).
 - **Compare two profiles.** Side by side, even across BIOS versions: settings are matched by
   their place in the menus, so a profile saved before a BIOS update lines up with one saved
   after it.
+- **Analyze any profile (experimental).** For a profile the regular reader can't open, from another
+  board, generation or vendor, the experimental analysis shows what the file is made of and, given
+  the BIOS that saved it, reads the settings it can tie to that BIOS's own definitions. Every
+  inferred mapping is labelled as such, unknown values stay unknown, and nothing it shows can be
+  edited or exported. Record names come from the BIOS image itself: its setup browser keeps a
+  list of the variables an OC profile saves, and each record's number is its place in that list.
+  Every one of the 126 MSI images examined has this list. Only MS-7D91 profiles have been checked
+  so far: there all 116 records get a name, the two stores the regular reader uses are confirmed,
+  and 42 more are mapped, about 5,300 settings in all. Profiles from other boards have not been
+  tried, so expect partial or blocked results.
+- **Compare with your own baseline.** The BIOS image's optimized defaults flag dozens of values
+  the firmware fills in by itself (DMI lanes, fan types). To see only what differs from a clean
+  setup, load optimized defaults in the BIOS, save a profile, and give it to the analysis as the
+  baseline (`--baseline <file>`, or "Baseline profile" in the app). Best is a defaults profile
+  saved on the same BIOS version as the profile you are reading. After a BIOS update you can no
+  longer save on the old version: a profile saved on the new version right after the update (when
+  the BIOS is at its defaults) also works. Give its BIOS image too (`--baseline-bios <image>`);
+  settings are then matched by menu place and name, and a difference can also be a default that
+  changed between the two versions. Settings present in only one version are not compared. A
+  difference means the two files store different values, not which one you set.
 - **Read-only, and your files stay on your computer.** Nothing is written and nothing is
   uploaded. Editing a profile and porting it to a new BIOS version exist, but are experimental
   and off by default (see [Read-only by default](#read-only-by-default)).
@@ -80,6 +100,11 @@ unzip it anywhere you can write to, and run `ocb-inspector`. There is no install
 Each release lists the zips' SHA-256 sums in `SHA256SUMS`, and every zip carries signed build
 provenance: `gh attestation verify <zip> --repo wapenshaw/ocb-inspector` checks that it was built
 by this repository's release workflow.
+
+The Windows programs are not code-signed (the project has no Authenticode certificate), so
+Windows SmartScreen may show "Windows protected your PC" the first time you run `ocb-inspector.exe`
+or `ocbi.exe`. Choose "More info", then "Run anyway". The SHA-256 sums and the build provenance
+check above are how to confirm that the download is the one this repository built.
 
 ### Linux
 
@@ -154,6 +179,10 @@ purpose, so that a build is inspect-only unless someone puts the files there.
   intended settings are present. It cannot tell whether the BIOS will accept the file or how it
   treats each setting. Treat the first load as a test: note your current settings, load the profile,
   and check each value in the BIOS screens. No import has been tried on hardware yet.
+- **Loading a profile also restores CMOS.** In the MS-7D91 firmware examined, the 256 bytes after
+  the settings are a copy of the board's CMOS memory at save time, and the BIOS's load code writes
+  CMOS bytes 0x40 to 0xFF back from the file (the clock area is skipped). Migration keeps that
+  block from the profile saved on the new BIOS, unchanged.
 - **Only 21 reviewed settings are carried over.** They cover CPU P-/E-core ratio offsets, core
   voltage mode and offset, VR voltage limit, under-voltage protection, Enhanced Turbo, cooler
   tuning, PL1/PL2, current limit, CEP, Lite Load, LLC, AC/DC loadline, IOMMU and High Efficiency
@@ -189,9 +218,14 @@ opening a pull request.
 
 ## Help wanted: profiles from other boards
 
-Profiles from boards other than Intel 600/700 series can't be opened yet, because their layout
-has never been seen. If you have one, [share it in a profile report](https://github.com/wapenshaw/ocb-inspector/issues/new?template=profile_report.yml).
-Two profiles that differ in one setting you changed on purpose are the most useful.
+Profiles from boards other than Intel 600/700 series can't be opened by the regular reader yet,
+because their layout has never been seen. The experimental analysis (`ocbi profile analyze
+--profile <file> --bios <image>`, or "Analyze profile experimentally" in the app) still shows what
+it can, and its JSON report says exactly which parts it inferred. If you have such a profile,
+[share it in a profile report](https://github.com/wapenshaw/ocb-inspector/issues/new?template=profile_report.yml),
+ideally with that analysis saved as a shareable report (`--shareable`, or "Save shareable report"
+in the app), which leaves out the CPU name, the save time and raw record bytes. Two profiles that differ in one setting you changed on purpose are the
+most useful.
 
 ## Licences
 

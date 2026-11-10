@@ -7,7 +7,11 @@ body:
       value: |
         Profiles open today only for Intel 600/700-series boards with the 961-byte CpuSetup
         layout. A real profile from another board is what lets support be added. A profile
-        holds only BIOS settings and the CPU name; it holds nothing personal.
+        holds your BIOS settings, the CPU model name, the date and time it was saved and a copy
+        of the board's CMOS memory. It also carries firmware variables this project cannot read
+        yet. If a BIOS password is set, the file may contain an encoded form of it (not
+        confirmed), so remove the BIOS password and save the profile again before sharing if you
+        use one.
   - type: input
     id: board
     attributes:
@@ -33,6 +37,6 @@ body:
     id: files
     attributes:
       label: Profiles
-      description: Zip the .ocb files and drop the zip here.
+      description: Zip the .ocb files and drop the zip here. An analysis report saved with the shareable option (`ocbi profile analyze --shareable`, or "Save shareable report" in the app) leaves out the CPU name, the save time and raw bytes.
     validations:
       required: true

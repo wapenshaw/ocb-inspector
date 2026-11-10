@@ -5,6 +5,7 @@
 pub mod browse;
 pub mod codec;
 pub mod edit;
+pub mod experimental;
 pub mod inspect;
 pub mod migrate;
 pub mod session;

@@ -32,6 +32,7 @@ const LZMA_GUID: &str = "EE4E5898-3914-4259-9D6E-DC7BD79403CF";
 const SECTION_COMPRESSION: u8 = 0x01;
 const SECTION_GUID_DEFINED: u8 = 0x02;
 const SECTION_PE32: u8 = 0x10;
+const SECTION_TE: u8 = 0x12;
 const SECTION_USER_INTERFACE: u8 = 0x15;
 const SECTION_FV_IMAGE: u8 = 0x17;
 const FFS_TYPE_PAD: u8 = 0xF0;
@@ -55,6 +56,8 @@ pub struct FfsFile {
     pub guid: String,
     pub name: Option<String>,
     pub pe32: Vec<Pe32Ref>,
+    /// TE image sections (PI spec vol. 3, `EFI_SECTION_TE`), recorded for research inventories.
+    pub te: Vec<Pe32Ref>,
     /// Path of containers, for provenance.
     pub path: String,
 }
@@ -62,6 +65,8 @@ pub struct FfsFile {
 pub struct Walk<'a> {
     pub image: &'a [u8],
     pub arena: Vec<Vec<u8>>,
+    /// Container path of each decompressed buffer (same index as `arena`), for provenance.
+    pub arena_paths: Vec<String>,
     pub files: Vec<FfsFile>,
     pub diagnostics: Vec<String>,
     limits: Limits,
@@ -93,6 +98,7 @@ pub fn walk_image(image: &[u8], limits: Limits) -> Result<Walk<'_>> {
     let mut w = Walk {
         image,
         arena: Vec::new(),
+        arena_paths: Vec::new(),
         files: Vec::new(),
         diagnostics: Vec::new(),
         limits,
@@ -214,6 +220,7 @@ fn walk_fv(
                 guid: guid.clone(),
                 name: None,
                 pe32: Vec::new(),
+                te: Vec::new(),
                 path: path.to_string(),
             });
             walk_sections(
@@ -269,6 +276,11 @@ fn walk_sections(
                 start: body.0,
                 end: body.1,
             }),
+            SECTION_TE => w.files[file].te.push(Pe32Ref {
+                buf,
+                start: body.0,
+                end: body.1,
+            }),
             SECTION_USER_INTERFACE => {
                 let b = w.buf(buf);
                 let units: Vec<u16> = b[body.0..body.1]
@@ -314,6 +326,7 @@ fn walk_sections(
                     let id = w.arena.len();
                     let len = out.len();
                     w.arena.push(out);
+                    w.arena_paths.push(format!("{path}/lzma"));
                     walk_sections(
                         w,
                         BufId::Arena(id),
@@ -347,6 +360,7 @@ fn walk_sections(
                             let id = w.arena.len();
                             let len = out.len();
                             w.arena.push(out);
+                            w.arena_paths.push(format!("{path}/efi"));
                             walk_sections(
                                 w,
                                 BufId::Arena(id),
@@ -492,5 +506,27 @@ mod tests {
                 .iter()
                 .any(|d| d.contains("invalid file size"))
         );
+    }
+
+    fn section(stype: u8, body: &[u8]) -> Vec<u8> {
+        let mut s = ((4 + body.len()) as u32).to_le_bytes()[..3].to_vec();
+        s.push(stype);
+        s.extend_from_slice(body);
+        while !s.len().is_multiple_of(4) {
+            s.push(0);
+        }
+        s
+    }
+
+    #[test]
+    fn te_and_pe32_sections_are_recorded_separately() {
+        let body = [section(SECTION_PE32, b"MZpe"), section(SECTION_TE, b"VZte")].concat();
+        let image = [vec![0u8; 16], volume(&[file([0x33; 16], 0x07, &body)])].concat();
+        let w = walk_image(&image, Limits::default()).unwrap();
+        let f = &w.files[0];
+        assert_eq!(f.pe32.len(), 1);
+        assert_eq!(f.te.len(), 1);
+        assert_eq!(w.bytes_of(&f.pe32[0]), b"MZpe");
+        assert_eq!(w.bytes_of(&f.te[0]), b"VZte");
     }
 }

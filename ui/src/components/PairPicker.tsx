@@ -18,6 +18,8 @@ export interface PairPickerProps {
   onReportChange?: (report: Report<InspectPayload> | null) => void;
   /** Open the chosen BIOS on its own. When set, images that cannot take a profile open directly. */
   onBrowse?: (bios: string) => void;
+  /** Open the experimental analysis with these paths (empty strings mean not chosen). Shown only when set. */
+  onAnalyze?: (bios: string, profile: string) => void;
   ref?: React.Ref<PairPickerHandle>;
 }
 
@@ -36,6 +38,7 @@ export function PairPicker({
   report = null,
   onReportChange,
   onBrowse,
+  onAnalyze,
   ref,
 }: PairPickerProps) {
   const uid = heading.toLowerCase().replace(/\W+/g, "-");
@@ -216,6 +219,20 @@ export function PairPicker({
               </button>
             </>
           )}
+          {onAnalyze && (
+            <button className="btn" onClick={() => onAnalyze(bios, profile)}>
+              <Icon name="file" /> Analyze profile experimentally
+            </button>
+          )}
+        </div>
+      )}
+
+      {onAnalyze && !report && !error && (
+        <div className={s.analyze}>
+          <button className="btn" onClick={() => onAnalyze(bios, profile)}>
+            <Icon name="file" /> Analyze profile experimentally
+          </button>
+          <span className="quiet">Read-only and experimental. Works with any profile, including ones the checked workflow cannot open.</span>
         </div>
       )}
     </section>

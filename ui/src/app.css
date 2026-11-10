@@ -357,11 +357,15 @@ select {
    label would be wider and nudge the next one. */
 .seg {
   display: inline-flex;
+  /* Many choices do not fit one row in a narrow window: the control wraps, never its labels. */
+  flex-wrap: wrap;
+  max-width: 100%;
   border: 1px solid var(--rule-strong);
   border-radius: var(--radius);
   overflow: hidden;
 }
 .seg label {
+  white-space: nowrap;
   display: inline-flex;
   align-items: center;
   gap: 6px;

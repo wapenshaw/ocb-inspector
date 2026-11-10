@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { pickFile } from "./api";
 import { Inspect } from "./components/Inspect";
 import { Migrate } from "./components/Migrate";
 import { Compare } from "./components/Compare";
+import { Analyze, type AnalyzeHandle } from "./components/Analyze";
 import { About } from "./components/About";
 import { Icon } from "./components/Icon";
 import { Status } from "./components/Status";
@@ -12,7 +13,7 @@ import { cx } from "./lib/cx";
 import { THEME_MODES } from "./lib/theme";
 import s from "./App.module.css";
 
-type View = "inspect" | "compare" | "migrate" | "about";
+type View = "inspect" | "compare" | "migrate" | "analyze" | "about";
 
 const WRITING_NOTE = "Experimental writing is on: Edit and Port can write new profiles. Turn it off under Settings (the version button).";
 
@@ -21,6 +22,7 @@ export function App() {
   const about = useAbout();
   const [view, setView] = useState<View>("inspect");
   const [browsing, setBrowsing] = useState<string | null>(null);
+  const analyzer = useRef<AnalyzeHandle>(null);
 
   const current = view !== "inspect" ? view : browsing ? "browse" : "inspect";
 
@@ -29,6 +31,11 @@ export function App() {
     if (browsing) return;
     const path = await pickFile("bios");
     if (path) setBrowsing(path);
+  }
+  /** Opens Analyze with the paths the picker had (empty = not chosen). */
+  function analyze(bios: string, profile: string) {
+    analyzer.current?.open(bios, profile);
+    setView("analyze");
   }
   function goInspect() {
     setView("inspect");
@@ -85,6 +92,7 @@ export function App() {
           <button {...tab(current === "browse")} onClick={() => void goBrowse()}>Browse BIOS</button>
           <button {...tab(current === "inspect")} onClick={goInspect}>{app.writing ? "Inspect and edit" : "Inspect"}</button>
           <button {...tab(current === "compare")} onClick={() => setView("compare")}>Compare</button>
+          <button {...tab(current === "analyze")} onClick={() => setView("analyze")}>Analyze</button>
           {app.writing && (
             <button {...tab(current === "migrate")} onClick={() => setView("migrate")}>Port to another BIOS</button>
           )}
@@ -94,10 +102,13 @@ export function App() {
       <main className={s.main}>
         {/* Both views stay mounted so switching keeps their state. */}
         <div className={s.view} hidden={view !== "inspect"}>
-          <Inspect browsing={browsing} onBrowsingChange={setBrowsing} active={view === "inspect"} />
+          <Inspect browsing={browsing} onBrowsingChange={setBrowsing} active={view === "inspect"} onAnalyze={analyze} />
         </div>
         <div className={s.view} hidden={view !== "compare"}>
           <Compare />
+        </div>
+        <div className={s.view} hidden={view !== "analyze"}>
+          <Analyze ref={analyzer} />
         </div>
         {app.writing && (
           <div className={s.view} hidden={view !== "migrate"}>

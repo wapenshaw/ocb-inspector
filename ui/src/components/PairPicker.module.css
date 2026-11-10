@@ -73,6 +73,12 @@
 .slot:disabled {
   cursor: not-allowed;
 }
+.analyze {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+}
 .error {
   display: flex;
   flex-direction: column;

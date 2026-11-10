@@ -1,6 +1,8 @@
 .app {
   display: grid;
   grid-template-rows: 52px 3px 1fr;
+  /* One column that never grows with its content: a wide bar must clip, not widen the app. */
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
 }
 .top {
@@ -159,6 +161,7 @@
 }
 .main {
   min-height: 0;
+  min-width: 0;
 }
 .view {
   display: flex;

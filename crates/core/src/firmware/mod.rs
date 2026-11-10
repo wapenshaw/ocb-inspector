@@ -10,7 +10,9 @@ pub mod ifr;
 pub mod intel;
 pub mod nvar;
 pub mod platform;
+pub mod profile_code;
 pub mod scan;
+pub mod spf;
 pub mod tiano;
 pub mod volume;
 
@@ -139,6 +141,14 @@ pub struct BiosImage {
     /// Complete firmware sets when the image holds more than one (32 MiB AM4 images); empty
     /// otherwise. `Formset::set` indexes this list; set 0 is shown by default.
     pub sets: Vec<FirmwareSet>,
+    /// The setup browser's variable lists (`$SPF`), one per firmware set that has one.
+    /// Analysis input only (record names for profile analysis); not part of any report.
+    #[serde(skip)]
+    pub variable_lists: Vec<spf::VariableList>,
+    /// Modules holding the OC-profile code (`$MOS$` save/load, `$OCI$` trailer). Analysis
+    /// input only; not part of any report.
+    #[serde(skip)]
+    pub profile_modules: profile_code::ProfileModules,
 }
 
 /// One of several complete firmware sets in an image. Labels and CPU hints are inferred from
@@ -215,10 +225,15 @@ impl Formset {
 /// Read an image once and hand it to the parser for its family. Fails only when the image is
 /// not a recognised MSI BIOS; a family without profile support still yields a browsable view.
 pub fn analyze(image: &[u8], limits: Limits) -> Result<Analysis> {
+    if let Some(why) = not_a_bios_image(image) {
+        return Err(Error::Unsupported(why));
+    }
     let identity = find_identity(image)?;
     let walk = volume::walk_image(image, limits)?;
     let mut diagnostics = walk.diagnostics.clone();
     let scanned = scan::scan_formsets(&walk, limits, &mut diagnostics)?;
+    let variable_lists = spf::find_lists(&walk, &mut diagnostics);
+    let profile_modules = profile_code::find(&walk);
     let intel = scanned.iter().any(intel::is_candidate) || intel::has_intel_markers(&scanned);
     let amd = scanned
         .iter()
@@ -229,6 +244,8 @@ pub fn analyze(image: &[u8], limits: Limits) -> Result<Analysis> {
         identity,
         defaults: nvar::read_std_defaults(image),
         diagnostics,
+        variable_lists,
+        profile_modules,
     };
     match (intel, amd) {
         (true, false) => Ok(intel::analyze(ctx, &scanned)),
@@ -251,6 +268,8 @@ pub(crate) struct Context {
     pub identity: BiosIdentity,
     pub defaults: std::result::Result<Option<nvar::DefaultsCopies>, String>,
     pub diagnostics: Vec<String>,
+    pub variable_lists: Vec<spf::VariableList>,
+    pub profile_modules: profile_code::ProfileModules,
 }
 
 impl Context {
@@ -283,6 +302,8 @@ impl Context {
             formsets,
             diagnostics,
             sets: Vec::new(),
+            variable_lists: self.variable_lists.clone(),
+            profile_modules: self.profile_modules.clone(),
         }
     }
 }
@@ -646,6 +667,48 @@ fn menu_paths(
     out
 }
 
+/// Recognise the common wrong files given as a BIOS image by their first bytes: an archive (MSI
+/// ships BIOS images zipped) or an OC profile. `head` is the start of the file. Magic bytes only.
+pub fn not_a_bios_image(head: &[u8]) -> Option<String> {
+    const ARCHIVES: &[(&[u8], &str)] = &[
+        (b"PK\x03\x04", "zip"),
+        (b"7z\xBC\xAF\x27\x1C", "7z"),
+        (b"Rar!\x1A\x07", "RAR"),
+        (b"\x1F\x8B\x08", "gzip"),
+    ];
+    if let Some((_, kind)) = ARCHIVES.iter().find(|(m, _)| head.starts_with(m)) {
+        return Some(format!(
+            "this is a {kind} archive, not a BIOS image. Extract it and open the BIOS file inside (its name looks like E7D91IMS.HJ0)"
+        ));
+    }
+    head.starts_with(crate::format::MAGIC).then(|| {
+        "this is an OC profile, not a BIOS image; the BIOS and profile files are probably swapped"
+            .to_string()
+    })
+}
+
+/// Split an MSI BIOS identifier (`E` + 4-char board + 3/4-char flavor + `.` + 3/4-char revision,
+/// e.g. `E7D91IMS.HJ0`, `E7E34IMSI.1AF0`) into (board, flavor, revision). Pure; no date needed.
+pub fn parse_bios_id(s: &str) -> Option<(String, String, String)> {
+    let alnum = |t: &str| {
+        !t.is_empty()
+            && t.bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+    };
+    let (head, revision) = s.split_once('.')?;
+    let board = head.strip_prefix('E')?.get(..4)?;
+    let flavor = head.get(5..)?;
+    if !(alnum(board)
+        && alnum(flavor)
+        && alnum(revision)
+        && (3..=4).contains(&flavor.len())
+        && (3..=4).contains(&revision.len()))
+    {
+        return None;
+    }
+    Some((board.into(), flavor.into(), revision.into()))
+}
+
 /// Find the embedded MSI BIOS identifier: `E` + 4-char board + 3-char flavor + `.` + 3-char revision,
 /// followed by a space and `MM/DD/YYYY`. Exactly one distinct value must exist.
 pub fn find_identity(image: &[u8]) -> Result<BiosIdentity> {
@@ -708,5 +771,46 @@ pub fn find_identity(image: &[u8]) -> Result<BiosIdentity> {
             "conflicting BIOS identifiers in image: {} / {}",
             a.0, b.0
         ))),
+    }
+}
+
+#[cfg(test)]
+mod wrong_input_tests {
+    use super::*;
+
+    #[test]
+    fn archives_are_named_by_magic_bytes() {
+        for (head, kind) in [
+            (&b"PK\x03\x04rest"[..], "zip"),
+            (b"7z\xBC\xAF\x27\x1C\0\x04", "7z"),
+            (b"Rar!\x1A\x07\x01\0", "RAR"),
+            (b"\x1F\x8B\x08\0", "gzip"),
+        ] {
+            let m = not_a_bios_image(head).expect(kind);
+            assert!(m.contains(&format!("{kind} archive")), "{m}");
+            assert!(
+                m.contains("Extract it") && m.contains("E7D91IMS.HJ0"),
+                "{m}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_profile_given_as_the_bios_is_called_one() {
+        let m = not_a_bios_image(b"$MOS$E7D91IMS.HJ0").expect("profile");
+        assert!(
+            m.contains("OC profile, not a BIOS image") && m.contains("swapped"),
+            "{m}"
+        );
+    }
+
+    #[test]
+    fn firmware_and_empty_input_pass_through() {
+        assert!(not_a_bios_image(&[0xFF; 16]).is_none());
+        assert!(not_a_bios_image(b"").is_none());
+        // The error kind stays `unsupported` (exit code 5).
+        let e = analyze(b"PK\x03\x04", Limits::default()).expect_err("zip");
+        assert!(matches!(e, Error::Unsupported(_)), "{e}");
+        assert_eq!(e.exit_code(), 5);
     }
 }

@@ -18,6 +18,10 @@ import type {
   UiSettings,
   SettingsChange,
   SavedSwitches,
+  AnalysisInputs,
+  AnalysisRequest,
+  ProfileFormatPayload,
+  ExperimentalInspectPayload,
 } from "./types";
 import { mock, mockPick } from "./mock";
 
@@ -59,6 +63,41 @@ export const api = {
   openPage: (url: string) => call<void>("open_page", { url }),
   settingsLoad: () => call<UiSettings>("settings_load", {}),
   settingsSave: (settings: SettingsChange) => call<SavedSwitches>("settings_save", { settings }),
+  /** Experimental, read-only analysis of any profile (BIOS optional). */
+  analyzeProfile: (r: AnalysisRequest) =>
+    call<Report<ExperimentalInspectPayload>>("analyze_profile", {
+      profile: r.profile,
+      bios: r.bios,
+      baseline: r.baseline ?? null,
+      baselineBios: r.baselineBios ?? null,
+      baselineSet: r.baselineSet ?? null,
+      set: r.set,
+    }),
+  /**
+   * Save the engine's analysis of these inputs; refused if a file (profile, BIOS or baseline) changed since
+   * `seen` was produced. `shareable` omits the CPU brand, save time and raw byte previews.
+   */
+  saveAnalysis: (r: AnalysisRequest, seen: AnalysisInputs, out: string, shareable = false) =>
+    call<string>("save_analysis", {
+      profile: r.profile,
+      bios: r.bios,
+      baseline: r.baseline ?? null,
+      baselineBios: r.baselineBios ?? null,
+      baselineSet: r.baselineSet ?? null,
+      set: r.set,
+      profileSha256: seen.profile_sha256,
+      biosSha256: seen.bios?.sha256 ?? null,
+      baselineSha256: seen.baseline?.sha256 ?? null,
+      baselineBiosSha256: seen.baseline?.bios?.sha256 ?? null,
+      shareable,
+      out,
+    }),
+  /** What a BIOS image says about the profiles it writes, without a profile. */
+  profileFormat: (bios: string, set: number | null) =>
+    call<Report<ProfileFormatPayload>>("profile_format", { bios, set }),
+  /** Save the engine's profile format of this image; refused if it changed since `seenSha256`. */
+  saveProfileFormat: (bios: string, set: number | null, seenSha256: string, out: string) =>
+    call<string>("save_profile_format", { bios, set, biosSha256: seenSha256, out }),
 };
 
 export interface PairPaths {
@@ -79,9 +118,9 @@ export async function pickFile(kind: "bios" | "profile"): Promise<string | null>
   return typeof r === "string" ? r : null;
 }
 
-export async function pickSave(defaultPath: string, kind: "ocb" | "json"): Promise<string | null> {
+export async function pickSave(defaultPath: string, kind: "ocb" | "json", title?: string): Promise<string | null> {
   if (!inTauri) return `preview/${defaultPath}`;
   const { save } = await import("@tauri-apps/plugin-dialog");
   const filters = kind === "ocb" ? [{ name: "OC profile", extensions: ["ocb"] }] : [{ name: "JSON", extensions: ["json"] }];
-  return save({ defaultPath, filters, title: kind === "ocb" ? "Export profile" : "Save migration plan" });
+  return save({ defaultPath, filters, title: title ?? (kind === "ocb" ? "Export profile" : "Save migration plan") });
 }

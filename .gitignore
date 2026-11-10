@@ -2,7 +2,13 @@
 
 # Proprietary BIOS images, user OC profiles and research material: never commit.
 /fixtures/
-/analysis/
+/analysis/*
+# Except the offline profile-code research tool (static analysis; never shipped). Its outputs and
+# dossiers stay local.
+!/analysis/tools/
+/analysis/tools/*
+!/analysis/tools/profile-code/
+/analysis/tools/profile-code/target/
 /docs/*
 !/docs/images/
 *.ocb
