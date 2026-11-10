@@ -507,6 +507,9 @@ fn known(bytes: &[u8], budget: &mut Budget) -> Result<ContainerCandidate> {
             format!("bytes 0x05..0x11: {:?}", c.header_id),
         ),
     ];
+    // Set when the trailer at the known place is coherent: `$OCI$` bytes before it then lie
+    // inside the CMOS image, which is data, not a second trailer.
+    let mut trailer_settled = false;
     match (&c.chain_error, c.chain_end) {
         (None, Some(end)) => {
             checks.push(check(
@@ -542,6 +545,7 @@ fn known(bytes: &[u8], budget: &mut Budget) -> Result<ContainerCandidate> {
                         t.tail_len == KNOWN_TAIL,
                         format!("{} bytes after the four strings", t.tail_len),
                     ));
+                    trailer_settled = t.timestamp_valid && t.tail_len == KNOWN_TAIL;
                 }
                 None => {
                     checks.push(not_evaluated(
@@ -569,6 +573,20 @@ fn known(bytes: &[u8], budget: &mut Budget) -> Result<ContainerCandidate> {
             ] {
                 checks.push(not_evaluated(name, "record chain incomplete"));
             }
+        }
+    }
+    if trailer_settled {
+        let before = c.trailers.len();
+        c.trailers.retain(|t| t.gap >= KNOWN_GAP);
+        let inside = before - c.trailers.len();
+        if inside > 0 {
+            checks.push(check(
+                "oci_bytes_inside_cmos_block",
+                true,
+                format!(
+                    "{inside} $OCI$ signature(s) inside the 256-byte CMOS block are its data, not a trailer"
+                ),
+            ));
         }
     }
     c.checks = checks;
@@ -744,6 +762,34 @@ mod tests {
         assert_eq!(v.header_id, "E7E34IMSI.1AF0");
         assert_eq!((v.checksum_at, v.count_at, v.records_at), (19, 23, 27));
         assert_eq!(v.trailer().unwrap().strings[1], "1AF0");
+    }
+
+    #[test]
+    fn oci_bytes_inside_the_cmos_block_are_not_a_second_trailer() {
+        // A real MS-7C77 profile has "$OCI$" at CMOS offset 250, six bytes before the trailer.
+        let mut b = build(&Spec::known("E7C77IMS", "1C0", recs()));
+        let end = run(&b).candidates[0].chain_end.unwrap();
+        b[end + 250..end + 256].copy_from_slice(b"$OCI$ ");
+        let stored = additive_checksum(&b, 0x11).unwrap();
+        b[0x11..0x15].copy_from_slice(&stored.to_le_bytes());
+        let r = run(&b);
+        let k = &r.candidates[0];
+        assert!(k.all_checks_pass(), "{:?}", k.checks);
+        let t = k.trailer().expect("one trailer");
+        assert_eq!((t.gap, t.strings[0].as_str()), (256, "E7C77IMS"));
+        assert!(
+            k.checks
+                .iter()
+                .any(|c| c.name == "oci_bytes_inside_cmos_block")
+        );
+
+        // Without a coherent trailer at the known place nothing is dropped: still ambiguous.
+        let mut s = Spec::known("E7C77IMS", "1C0", recs());
+        s.tail = 7;
+        let mut b = build(&s);
+        b[end + 250..end + 256].copy_from_slice(b"$OCI$ ");
+        let k = &run(&b).candidates[0];
+        assert!(k.trailer().is_none(), "{:?}", k.trailers);
     }
 
     #[test]
