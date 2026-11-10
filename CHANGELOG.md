@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/wapenshaw/ocb-inspector/compare/v0.3.0...v0.4.0) (2026-11-10)
+
+
+### Features
+
+* analyze any profile experimentally, with baseline comparison ([4efb4d2](https://github.com/wapenshaw/ocb-inspector/commit/4efb4d2525e03b764ae66ba61040701d19e8fd1f))
+
+
+### Bug Fixes
+
+* **core:** read profiles whose CMOS block contains the $OCI$ bytes ([02e5bc0](https://github.com/wapenshaw/ocb-inspector/commit/02e5bc013dd50caae43d083044b07a29536d3a10))
+* **desktop:** do not offer the experimental analysis on a BIOS mismatch ([d7af08a](https://github.com/wapenshaw/ocb-inspector/commit/d7af08a2a00ed65d1d88d762533851915a81c7f9))
+
 ## [0.3.0](https://github.com/wapenshaw/ocb-inspector/compare/v0.2.0...v0.3.0) (2026-11-09)
 
 
